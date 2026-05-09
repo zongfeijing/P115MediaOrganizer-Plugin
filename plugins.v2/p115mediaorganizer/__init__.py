@@ -76,7 +76,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "0.1.0"
+    plugin_version = "0.1.1"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -182,38 +182,52 @@ class P115MediaOrganizer(_PluginBase):
         return [{
             "component": "VForm",
             "content": [
+                self._form_hint("基础设置"),
                 self._row([
-                    self._switch("enabled", "启用插件"), self._switch("notify", "发送通知"), self._switch("onlyonce", "立即运行一次"),
+                    self._col(self._switch("enabled", "启用插件"), 4),
+                    self._col(self._switch("notify", "发送通知"), 4),
+                    self._col(self._switch("onlyonce", "立即运行一次"), 4),
                 ]),
                 self._row([
-                    self._text("cron", "CRON表达式"),
-                    self._select("profile", "运行环境", [{"title": "工作区", "value": "workspace"}, {"title": "生产", "value": "production"}]),
-                    self._switch("dry_run", "仅生成计划"),
-                    self._switch("allow_production_execute", "允许生产执行"),
+                    self._col(self._text("cron", "CRON表达式"), 6),
+                    self._col(self._select("profile", "运行环境", [{"title": "工作区", "value": "workspace"}, {"title": "生产", "value": "production"}]), 6),
                 ]),
                 self._row([
-                    self._switch("move_whole_dirs", "整目录移动"),
-                    self._switch("delete_empty_source_dirs", "删除空源目录"),
-                    self._select("conflict_strategy", "重名策略", [{"title": "跳过", "value": "skip"}, {"title": "自动后缀", "value": "rename_with_suffix"}]),
-                    self._select("unrecognized_action", "未识别处理", [{"title": "跳过", "value": "skip"}, {"title": "移动到未识别", "value": "move_to_unrecognized"}]),
+                    self._col(self._switch("dry_run", "仅生成计划"), 4),
+                    self._col(self._switch("allow_production_execute", "允许生产执行"), 4),
+                    self._col(self._switch("move_whole_dirs", "整目录移动"), 4),
+                ]),
+                self._form_hint("执行策略"),
+                self._row([
+                    self._col(self._switch("delete_empty_source_dirs", "删除空源目录"), 4),
+                    self._col(self._select("conflict_strategy", "重名策略", [{"title": "跳过", "value": "skip"}, {"title": "自动后缀", "value": "rename_with_suffix"}]), 4),
+                    self._col(self._select("unrecognized_action", "未识别处理", [{"title": "跳过", "value": "skip"}, {"title": "移动到未识别", "value": "move_to_unrecognized"}]), 4),
                 ]),
                 self._row([
-                    self._text("cookie_path", "115 Cookie文件路径"),
-                    self._text("source_movie_cid", "电影来源CID"),
-                    self._text("source_tv_cid", "电视剧来源CID"),
+                    self._col(self._text("max_depth", "最大扫描深度"), 4),
+                    self._col(self._text("max_items_per_run", "单次最多处理"), 4),
+                    self._col(self._text("min_file_size_mb", "最小文件大小MB"), 4),
                 ]),
-                self._textarea("source_mappings", "来源目录映射JSON", rows=8),
                 self._row([
-                    self._text("max_depth", "最大扫描深度"),
-                    self._text("max_items_per_run", "单次最多处理"),
-                    self._text("min_file_size_mb", "最小文件大小MB"),
-                    self._text("batch_size", "批大小"),
-                    self._text("sleep_between_batches", "批间隔秒"),
-                    self._text("history_limit", "历史保留条数"),
+                    self._col(self._text("batch_size", "批大小"), 4),
+                    self._col(self._text("sleep_between_batches", "批间隔秒"), 4),
+                    self._col(self._text("history_limit", "历史保留条数"), 4),
                 ]),
-                self._textarea("exclude_keywords", "排除关键词，逗号分隔", rows=2),
-                self._textarea("category_mapping", "分类别名映射JSON（可选）", rows=5),
-                self._textarea("target_cids", "目标CID JSON", rows=10),
+                self._form_hint("115 连接"),
+                self._row([
+                    self._col(self._text("cookie_path", "115 Cookie文件路径"), 12),
+                ]),
+                self._form_hint("目录配置"),
+                self._row([self._col(self._textarea("source_mappings", "来源目录映射JSON", rows=8), 12)]),
+                self._row([self._col(self._textarea("target_cids", "目标CID JSON", rows=10), 12)]),
+                self._form_hint("高级选项"),
+                self._row([self._col(self._textarea("exclude_keywords", "排除关键词，逗号分隔", rows=2), 12)]),
+                self._row([self._col(self._textarea("category_mapping", "分类别名映射JSON（可选）", rows=5), 12)]),
+                self._form_hint("兼容旧配置：通常不需要填写"),
+                self._row([
+                    self._col(self._text("source_movie_cid", "电影来源CID"), 6),
+                    self._col(self._text("source_tv_cid", "电视剧来源CID"), 6),
+                ]),
             ],
         }], self._default_config()
 
@@ -586,8 +600,19 @@ class P115MediaOrganizer(_PluginBase):
         return {"component": "VTextarea", "props": {"model": model, "label": label, "rows": rows}}
 
     @staticmethod
-    def _row(components: List[Dict[str, Any]]) -> Dict[str, Any]:
-        return {"component": "VRow", "content": [{"component": "VCol", "props": {"cols": 12, "md": max(2, 12 // len(components))}, "content": [component]} for component in components]}
+    def _col(component: Dict[str, Any], md: int = 12) -> Dict[str, Any]:
+        return {"component": "VCol", "props": {"cols": 12, "md": md}, "content": [component]}
+
+    @staticmethod
+    def _row(cols: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return {"component": "VRow", "content": cols}
+
+    @staticmethod
+    def _form_hint(text: str) -> Dict[str, Any]:
+        return {
+            "component": "VAlert",
+            "props": {"type": "info", "variant": "tonal", "density": "compact", "class": "mb-2", "text": text},
+        }
 
     @staticmethod
     def _count_by(items: List[Dict[str, Any]], key: str) -> Dict[str, int]:
