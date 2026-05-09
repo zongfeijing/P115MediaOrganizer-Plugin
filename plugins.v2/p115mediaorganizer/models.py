@@ -34,8 +34,6 @@ class OrganizePlan:
     source_parent_cid: str
     source_root_cid: str
     source_is_dir: bool
-    source_path: str
-    target_category_path: str
     path_hint: str
     title: str
     year: Optional[str]

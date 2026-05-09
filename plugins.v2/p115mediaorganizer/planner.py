@@ -24,13 +24,11 @@ class Planner:
         history: List[Dict[str, Any]],
         unrecognized_action: str = "skip",
         source_root_cid: str = "",
-        target_category_paths: Dict[str, str] = None,
     ) -> List[Dict[str, Any]]:
         plan_id = uuid.uuid4().hex
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         plans: List[Dict[str, Any]] = []
         history_keys = self._history_keys(history)
-        target_category_paths = target_category_paths or {}
 
         for item in items:
             item_key = self._item_key(item)
@@ -51,7 +49,6 @@ class Planner:
                 warnings.extend(category_warning.split("；"))
 
             target_parent = self.target_cids.get(media_type, {}).get(target_category, "")
-            target_category_path = target_category_paths.get(target_category, "")
             confidence = "normal" if mediainfo else "unrecognized"
             action = "move"
             status = "planned"
@@ -61,7 +58,6 @@ class Planner:
                     action = "move"
                     target_category = "未识别"
                     target_parent = unrecognized_cid
-                    target_category_path = target_category_paths.get("未识别", "")
                     warnings.append("未识别项目将移动到未识别目录")
                 else:
                     action = "skip"
@@ -79,7 +75,6 @@ class Planner:
 
             target_path = str(PurePosixPath(target_category) / target_dir_name / (target_season_dir_name or "") / target_name)
             target_path = target_path.replace("//", "/")
-            source_path = item.path_hint
             plans.append(OrganizePlan(
                 plan_id=plan_id,
                 item_id=item_key,
@@ -94,8 +89,6 @@ class Planner:
                 source_parent_cid=item.parent_cid,
                 source_root_cid=source_root_cid,
                 source_is_dir=item.is_dir,
-                source_path=source_path,
-                target_category_path=target_category_path,
                 path_hint=item.path_hint,
                 title=title,
                 year=str(year) if year else None,

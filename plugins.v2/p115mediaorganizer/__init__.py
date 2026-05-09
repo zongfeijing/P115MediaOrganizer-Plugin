@@ -219,7 +219,7 @@ class P115MediaOrganizer(_PluginBase):
                 ]),
                 self._form_hint("115 连接"),
                 self._row([
-                    self._col(self._text("cookie_path", "115 Cookie文件路径（MoviePilot 115不可用时使用）"), 12),
+                    self._col(self._text("cookie_path", "115 Cookie文件路径"), 12),
                 ]),
                 self._row([
                     self._col(self._textarea("cookie_text", "115 Cookie文本（文件不可用时兜底）", rows=3), 12),
@@ -243,8 +243,7 @@ class P115MediaOrganizer(_PluginBase):
         last_result = self.get_data("last_result") or {}
         history = self.get_data("history") or []
         p115 = self._p115_ops()
-        backend = "MoviePilot 115" if p115.backend == "moviepilot" else "p115client"
-        status = f"{backend}可用" if p115.available else p115.import_error or "115连接不可用"
+        status = "p115client可用" if p115.available else p115.import_error or "p115client不可用"
         plan_summary = self._count_by(last_plan, "status")
         plan_rows = [[
             item.get("media_type"),
@@ -448,7 +447,6 @@ class P115MediaOrganizer(_PluginBase):
                 self.get_data("history") or [],
                 self._unrecognized_action,
                 source_root_cid=source_cid,
-                target_category_paths=self._target_category_paths(source),
             )
             if save:
                 self.save_data("last_plan", plan)
@@ -498,14 +496,6 @@ class P115MediaOrganizer(_PluginBase):
         self._resolve_target_paths(resolved, p115=p115)
         return resolved
 
-
-    def _target_category_paths(self, source: Dict[str, Any]) -> Dict[str, str]:
-        target_root_path = str(source.get("target_root_path") or "").rstrip("/")
-        media_type = str(source.get("media_type") or "").lower()
-        if not target_root_path or media_type not in ("movie", "tv"):
-            return {}
-        categories = self._current_target_cids().get(media_type, {}).keys()
-        return {category: f"{target_root_path}/{category}" for category in categories}
 
     def _category_mapping_dict(self) -> Dict[str, Dict[str, str]]:
         try:

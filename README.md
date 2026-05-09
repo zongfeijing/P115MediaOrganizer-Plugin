@@ -22,9 +22,9 @@ plugins.v2/p115mediaorganizer
 
 ### 115 Connection
 
-The plugin first tries to reuse MoviePilot's built-in 115 login. If that login is available, no extra cookie is required.
+The plugin uses `p115client`, so it needs a 115 web cookie.
 
-Fallback options:
+Cookie options:
 
 - `cookie_path`: point it to a cookie file mounted inside the MoviePilot container, for example `/config/115-cookies.txt`.
 - `cookie_text`: paste a cookie directly when the file path is unavailable or invalid.
@@ -74,7 +74,7 @@ For example, if MoviePilot classifies a TV item as `欧美剧`, the plugin resol
 
 The plugin details page shows:
 
-- active 115 backend status, either MoviePilot 115 or p115client
+- p115client connection status
 - source mappings
 - latest dry-run plan
 - execution result and errors
@@ -86,5 +86,4 @@ The plugin details page shows:
 - Defaults to dry-run.
 - Production execution requires explicitly enabling production execution.
 - Empty source directory cleanup only runs under configured source roots.
-- Cookie fallback is optional; prefer MoviePilot's built-in 115 login when available.
 - Keep real cookies, CIDs, and private 115 paths out of this public repository.
