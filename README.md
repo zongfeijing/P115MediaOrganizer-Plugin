@@ -1,10 +1,16 @@
-# P115MediaOrganizer Plugin
+# P115MediaOrganizer
 
 MoviePilot V2 plugin for organizing media files directly inside 115 cloud drive.
+
+This plugin scans configured 115 source folders, uses MoviePilot recognition and category rules, then moves/renames files in 115 to the matching media library folders. It does not download files and does not create STRM files.
 
 ## Install In MoviePilot
 
 Use this repository URL as a third-party plugin market/source in MoviePilot, then install `115云端媒体整理`.
+
+```text
+https://github.com/zongfeijing/P115MediaOrganizer-Plugin
+```
 
 The V2 plugin index is `package.v2.json`, and the plugin code is under:
 
@@ -12,9 +18,73 @@ The V2 plugin index is `package.v2.json`, and the plugin code is under:
 plugins.v2/p115mediaorganizer
 ```
 
-## Notes
+## Configuration
 
-- Requires `p115client`.
-- Does not download media files.
-- Does not generate STRM files.
-- Defaults to dry-run and workspace-safe execution.
+### 115 Connection
+
+The plugin first tries to reuse MoviePilot's built-in 115 login. If that login is available, no extra cookie is required.
+
+Fallback options:
+
+- `cookie_path`: point it to a cookie file mounted inside the MoviePilot container, for example `/config/115-cookies.txt`.
+- `cookie_text`: paste a cookie directly when the file path is unavailable or invalid.
+
+### Directory Mapping
+
+Common usage only needs 115 paths. Each source mapping has:
+
+- `media_type`: `movie` or `tv`
+- `source_path`: folder to scan
+- `target_root_path`: media library root for that media type
+
+Example:
+
+```json
+[
+  {
+    "name": "电影来源",
+    "media_type": "movie",
+    "source_path": "/待整理/Movie",
+    "target_root_path": "/媒体库/Movie"
+  },
+  {
+    "name": "电视剧来源",
+    "media_type": "tv",
+    "source_path": "/待整理/TV",
+    "target_root_path": "/媒体库/TV"
+  }
+]
+```
+
+The plugin resolves target folders as:
+
+```text
+{target_root_path}/{MoviePilot分类名}
+```
+
+For example, if MoviePilot classifies a TV item as `欧美剧`, the plugin resolves `/媒体库/TV/欧美剧` and moves the file there. Keep those category folder names aligned with MoviePilot's generated media library structure.
+
+### Advanced Overrides
+
+- `target_cids`: optional advanced override. Leave category CID values empty when using path-based mapping.
+- `category_mapping`: optional alias map only. Use it when MoviePilot's category name needs to be mapped to a different folder name.
+- `source_cid`, `source_movie_cid`, `source_tv_cid`: legacy compatibility fields. Usually not needed.
+
+## Details Page
+
+The plugin details page shows:
+
+- active 115 backend status, either MoviePilot 115 or p115client
+- source mappings
+- latest dry-run plan
+- execution result and errors
+- recent history
+- cleaned empty source directory count
+
+## Safety Notes
+
+- Defaults to dry-run.
+- Production execution requires explicitly enabling production execution.
+- Empty source directory cleanup only runs under configured source roots.
+- Cookie fallback is optional; prefer MoviePilot's built-in 115 login when available.
+- Keep real cookies, CIDs, and private 115 paths out of this public repository.

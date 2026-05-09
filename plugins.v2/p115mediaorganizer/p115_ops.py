@@ -17,11 +17,14 @@ class P115UnavailableError(RuntimeError):
 
 
 class P115Ops:
-    def __init__(self, cookie_path: str):
+    def __init__(self, cookie_path: str = "", cookie_text: str = ""):
         self.cookie_path = cookie_path
+        self.cookie_text = cookie_text
         self.client = None
+        self.backend = ""
         self.import_error = ""
         self._mkdir_cache: Dict[str, str] = {}
+        self._mp_item_cache: Dict[str, Any] = {}
         self._init_client()
 
     @property
@@ -29,33 +32,83 @@ class P115Ops:
         return self.client is not None and not self.import_error
 
     def _init_client(self):
+        mp_error = self._init_moviepilot_client()
+        if self.client:
+            return
+        cookie_error = self._init_cookie_client()
+        if self.client:
+            return
+        errors = [error for error in (mp_error, cookie_error) if error]
+        self.import_error = "；".join(errors) or "MoviePilot 115未登录，且p115client Cookie不可用"
+
+    def _init_moviepilot_client(self) -> str:
+        try:
+            from app.modules.filemanager.storages.u115 import U115Pan
+
+            storage = U115Pan()
+            if not storage.check():
+                return "MoviePilot 115未登录或登录凭证不可用"
+            self.client = storage
+            self.backend = "moviepilot"
+            return ""
+        except Exception as err:
+            return f"MoviePilot 115初始化失败：{err}"
+
+    def _init_cookie_client(self) -> str:
         try:
             from p115client import P115Client
         except Exception as err:
-            self.import_error = f"p115client导入失败：{err}"
-            return
+            return f"p115client导入失败：{err}"
 
         try:
+            if self.cookie_text:
+                self.client = P115Client(self.cookie_text)
+                self.backend = "p115client"
+                return ""
             cookie_file = Path(self.cookie_path)
-            if not cookie_file.exists():
-                self.import_error = f"115 Cookie文件不存在：{self.cookie_path}"
-                return
+            if not self.cookie_path or not cookie_file.exists():
+                return f"115 Cookie文件不存在：{self.cookie_path}"
             self.client = P115Client(cookie_file)
+            self.backend = "p115client"
+            return ""
         except TypeError:
             try:
                 self.client = P115Client(cookies=Path(self.cookie_path))
+                self.backend = "p115client"
+                return ""
             except Exception as err:
-                self.import_error = f"p115client初始化失败：{err}"
+                return f"p115client初始化失败：{err}"
         except Exception as err:
-            self.import_error = f"p115client初始化失败：{err}"
+            return f"p115client初始化失败：{err}"
+
+    def resolve_path(self, path: str) -> str:
+        client = self.require_client()
+        if self.backend == "moviepilot":
+            item = client.get_item(Path(path))
+            if not item or getattr(item, "type", "") != "dir":
+                raise P115UnavailableError(f"路径不存在或不是目录：{path}")
+            self._moviepilot_remember(item)
+            return str(item.fileid)
+
+        method = getattr(client, "fs_dir_getid", None)
+        if not method:
+            raise P115UnavailableError("当前p115client未找到可用的路径解析API")
+        result = method(path)
+        self._raise_if_failed(result)
+        cid = result.get("id") if isinstance(result, dict) else None
+        if not cid:
+            raise P115UnavailableError(f"路径不存在或不是目录：{path}")
+        return str(cid)
 
     def require_client(self):
         if not self.available:
-            raise P115UnavailableError(self.import_error or "p115client不可用")
+            raise P115UnavailableError(self.import_error or "115连接不可用")
         return self.client
 
     def list_entries(self, cid: str) -> List[Any]:
         client = self.require_client()
+        if self.backend == "moviepilot":
+            return self._moviepilot_list_entries(cid)
         for method_name in ("fs_files", "fs_list", "list", "listdir", "iterdir"):
             method = getattr(client, method_name, None)
             if not method:
@@ -127,6 +180,15 @@ class P115Ops:
             self._mkdir_cache[key] = cid
             return cid
         client = self.require_client()
+        if self.backend == "moviepilot":
+            parent_path = self._moviepilot_path(parent_cid)
+            folder = client.get_folder(parent_path / name)
+            if folder:
+                self._moviepilot_remember(folder)
+                cid = str(folder.fileid)
+                self._mkdir_cache[key] = cid
+                return cid
+            raise P115UnavailableError(f"创建目录失败：{parent_path / name}")
         for method_name in ("fs_mkdir", "mkdir", "makedirs"):
             method = getattr(client, method_name, None)
             if not method:
@@ -178,6 +240,11 @@ class P115Ops:
 
     def delete(self, fid_or_cid: str):
         client = self.require_client()
+        if self.backend == "moviepilot":
+            item = self._moviepilot_entry(fid_or_cid)
+            if not item:
+                raise P115UnavailableError(f"删除失败，找不到项目：{fid_or_cid}")
+            return client.delete(item)
         for method_name in ("fs_delete", "delete", "remove"):
             method = getattr(client, method_name, None)
             if not method:
@@ -192,6 +259,16 @@ class P115Ops:
 
     def rename(self, fid: str, name: str):
         client = self.require_client()
+        if self.backend == "moviepilot":
+            item = self._moviepilot_entry(fid)
+            if not item:
+                raise P115UnavailableError(f"重命名失败，找不到项目：{fid}")
+            if not client.rename(item, name):
+                raise P115UnavailableError(f"重命名失败：{item.name} -> {name}")
+            item.name = name
+            item.path = (Path(item.path).parent / name).as_posix() + ("/" if getattr(item, "type", "") == "dir" else "")
+            self._moviepilot_remember(item)
+            return True
         for method_name in ("fs_rename", "rename"):
             method = getattr(client, method_name, None)
             if not method:
@@ -209,6 +286,16 @@ class P115Ops:
 
     def move(self, fid: str, target_cid: str):
         client = self.require_client()
+        if self.backend == "moviepilot":
+            item = self._moviepilot_entry(fid)
+            target_path = self._moviepilot_path(target_cid)
+            if not item:
+                raise P115UnavailableError(f"移动失败，找不到项目：{fid}")
+            if not client.move(item, target_path, item.name):
+                raise P115UnavailableError(f"移动失败：{item.name} -> {target_path}")
+            item.path = (target_path / item.name).as_posix() + ("/" if getattr(item, "type", "") == "dir" else "")
+            self._moviepilot_remember(item)
+            return True
         for method_name in ("fs_move", "move"):
             method = getattr(client, method_name, None)
             if not method:
@@ -225,6 +312,9 @@ class P115Ops:
         raise P115UnavailableError("当前p115client未找到可用的移动API")
 
     def execute_move(self, plan: Dict[str, Any], conflict_strategy: str = "skip") -> Dict[str, Any]:
+        if self.backend == "moviepilot":
+            return self._moviepilot_execute_move(plan, conflict_strategy)
+
         source_id = plan.get("source_cid") if plan.get("source_is_dir") else plan.get("source_fid")
         if not source_id:
             return {"success": False, "message": "源文件ID为空"}
@@ -250,6 +340,52 @@ class P115Ops:
         self.move(source_id, final_parent)
         return {"success": True, "message": "完成", "target_name": target_name, "target_parent_cid": final_parent}
 
+
+    def _moviepilot_execute_move(self, plan: Dict[str, Any], conflict_strategy: str = "skip") -> Dict[str, Any]:
+        source_path = plan.get("source_path") or plan.get("path_hint")
+        source_item = self.client.get_item(Path(source_path)) if source_path else None
+        if not source_item:
+            return {"success": False, "message": f"源文件不存在：{source_path}"}
+        self._moviepilot_remember(source_item)
+
+        target_category_path = plan.get("target_category_path")
+        if not target_category_path:
+            target_parent = plan.get("target_parent_cid")
+            target_category_path = self._moviepilot_path(target_parent).as_posix() if target_parent else ""
+        if not target_category_path:
+            return {"success": False, "message": "目标分类路径为空"}
+
+        target_dir = self.client.get_folder(Path(target_category_path) / str(plan.get("target_dir_name") or ""))
+        if not target_dir:
+            return {"success": False, "message": f"目标目录创建失败：{target_category_path}"}
+        if plan.get("target_season_dir_name"):
+            target_dir = self.client.get_folder(Path(target_dir.path) / str(plan.get("target_season_dir_name")))
+            if not target_dir:
+                return {"success": False, "message": f"季目录创建失败：{plan.get('target_season_dir_name')}"}
+
+        target_name = plan.get("target_name") or plan.get("source_name")
+        if not plan.get("source_is_dir"):
+            conflict = self.client.get_item(Path(target_dir.path) / target_name)
+            if conflict and conflict_strategy == "skip":
+                return {"success": False, "skipped": True, "message": f"目标已存在：{target_name}"}
+            if conflict and conflict_strategy == "rename_with_suffix":
+                target_name = self._moviepilot_next_available_name(Path(target_dir.path), target_name, False)
+
+        if not self.client.move(source_item, Path(target_dir.path), target_name):
+            return {"success": False, "message": f"移动失败：{source_item.name} -> {Path(target_dir.path) / target_name}"}
+        return {"success": True, "message": "完成", "target_name": target_name, "target_parent_cid": str(target_dir.fileid)}
+
+    def _moviepilot_next_available_name(self, parent_path: Path, name: str, folder: bool) -> str:
+        path = PurePosixPath(name)
+        stem = path.stem if path.suffix else name
+        suffix = path.suffix
+        for index in range(1, 1000):
+            candidate = f"{stem} ({index}){suffix}"
+            item = self.client.get_item(parent_path / candidate)
+            if not item or ((getattr(item, "type", "") == "dir") != folder):
+                return candidate
+        raise P115UnavailableError(f"无法生成不冲突名称：{name}")
+
     def _next_available_name(self, parent_cid: str, name: str, folder: bool) -> str:
         path = PurePosixPath(name)
         stem = path.stem if path.suffix else name
@@ -259,6 +395,61 @@ class P115Ops:
             if not self.find_child(parent_cid, candidate, folder=folder):
                 return candidate
         raise P115UnavailableError(f"无法生成不冲突名称：{name}")
+
+
+    def _moviepilot_list_entries(self, cid: str) -> List[Any]:
+        from app.schemas import FileItem
+        fileitem = FileItem(storage="u115", fileid=str(cid), path=self._moviepilot_path(cid).as_posix(), type="dir")
+        entries = self.client.list(fileitem)
+        return [self._moviepilot_to_entry(entry, cid) for entry in entries]
+
+    def _moviepilot_to_entry(self, item: Any, parent_cid: str) -> Dict[str, Any]:
+        self._moviepilot_remember(item)
+        return {
+            "name": getattr(item, "name", ""),
+            "fid": str(getattr(item, "fileid", "") or ""),
+            "cid": str(getattr(item, "fileid", "") or ""),
+            "parent_cid": str(parent_cid or ""),
+            "path": str(getattr(item, "path", "") or ""),
+            "is_dir": getattr(item, "type", "") == "dir",
+            "size": int(getattr(item, "size", 0) or 0),
+            "_fileitem": item,
+        }
+
+    def _moviepilot_entry(self, fileid: str) -> Optional[Any]:
+        item = self._moviepilot_item_by_id(fileid)
+        if item:
+            return item
+        parent_cid = self._moviepilot_parent_cid(fileid)
+        for entry in self.list_entries(parent_cid):
+            if self.entry_cid(entry) == str(fileid) or self.entry_fid(entry) == str(fileid):
+                return entry.get("_fileitem") if isinstance(entry, dict) else entry
+        return None
+
+    def _moviepilot_path(self, cid: str) -> Path:
+        if not cid or str(cid) == "0":
+            return Path("/")
+        item = self._moviepilot_item_by_id(cid)
+        if not item:
+            raise P115UnavailableError(f"找不到115目录：{cid}")
+        return Path(item.path)
+
+    def _moviepilot_parent_cid(self, fileid: str) -> str:
+        item = self._moviepilot_item_by_id(fileid)
+        parent = getattr(item, "parent_fileid", "") if item else ""
+        if parent:
+            return str(parent)
+        path = Path(getattr(item, "path", "/") or "/") if item else Path("/")
+        parent_item = self.client.get_item(path.parent) if path.parent.as_posix() != path.as_posix() else None
+        return str(getattr(parent_item, "fileid", "0") or "0")
+
+    def _moviepilot_item_by_id(self, fileid: str) -> Optional[Any]:
+        return self._mp_item_cache.get(str(fileid))
+
+    def _moviepilot_remember(self, item: Any):
+        fileid = str(getattr(item, "fileid", "") or "")
+        if fileid:
+            self._mp_item_cache[fileid] = item
 
     def _to_media_item(self, entry: Any, parent_cid: str, path_hint: str) -> MediaItem:
         name = self.entry_name(entry)

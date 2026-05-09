@@ -26,16 +26,16 @@ DEFAULT_SOURCE_CIDS = {
 
 DEFAULT_SOURCE_MAPPINGS = [
     {
-        "name": "最近接收电影",
+        "name": "电影来源",
         "media_type": "movie",
-        "source_cid": DEFAULT_SOURCE_CIDS["movie"],
-        "source_path": "/最近接收/Movie",
+        "source_path": "/待整理/Movie",
+        "target_root_path": "/媒体库/Movie",
     },
     {
-        "name": "最近接收电视剧",
+        "name": "电视剧来源",
         "media_type": "tv",
-        "source_cid": DEFAULT_SOURCE_CIDS["tv"],
-        "source_path": "/最近接收/TV",
+        "source_path": "/待整理/TV",
+        "target_root_path": "/媒体库/TV",
     },
 ]
 
@@ -76,7 +76,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "0.1.1"
+    plugin_version = "0.2.0"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -101,6 +101,7 @@ class P115MediaOrganizer(_PluginBase):
     _unrecognized_action = "skip"
     _exclude_keywords = "sample,trailer,花絮,预告"
     _cookie_path = "/config/115-cookies.txt"
+    _cookie_text = ""
     _source_movie_cid = DEFAULT_SOURCE_CIDS["movie"]
     _source_tv_cid = DEFAULT_SOURCE_CIDS["tv"]
     _source_mappings = json.dumps(DEFAULT_SOURCE_MAPPINGS, ensure_ascii=False, indent=2)
@@ -130,6 +131,7 @@ class P115MediaOrganizer(_PluginBase):
         self._unrecognized_action = str(config.get("unrecognized_action") or "skip")
         self._exclude_keywords = str(config.get("exclude_keywords") or "")
         self._cookie_path = str(config.get("cookie_path") or "/config/115-cookies.txt")
+        self._cookie_text = str(config.get("cookie_text") or "")
         self._source_movie_cid = str(config.get("source_movie_cid") or DEFAULT_SOURCE_CIDS["movie"])
         self._source_tv_cid = str(config.get("source_tv_cid") or DEFAULT_SOURCE_CIDS["tv"])
         self._source_mappings = config.get("source_mappings") or self._source_mappings
@@ -165,6 +167,8 @@ class P115MediaOrganizer(_PluginBase):
             {"path": "/execute_last_plan", "endpoint": self.execute_last_plan, "methods": ["POST"], "auth": "bear", "summary": "执行最近一次整理计划"},
             {"path": "/history", "endpoint": self.history, "methods": ["GET"], "auth": "bear", "summary": "查询整理历史"},
             {"path": "/clear_history", "endpoint": self.clear_history, "methods": ["POST"], "auth": "bear", "summary": "清空整理历史"},
+            {"path": "/resolve_path", "endpoint": self.resolve_path_api, "methods": ["POST"], "auth": "bear", "summary": "解析115路径"},
+            {"path": "/list_dir", "endpoint": self.list_dir_api, "methods": ["POST"], "auth": "bear", "summary": "列出115目录"},
         ]
 
     def get_service(self) -> List[Dict[str, Any]]:
@@ -215,11 +219,14 @@ class P115MediaOrganizer(_PluginBase):
                 ]),
                 self._form_hint("115 连接"),
                 self._row([
-                    self._col(self._text("cookie_path", "115 Cookie文件路径"), 12),
+                    self._col(self._text("cookie_path", "115 Cookie文件路径（MoviePilot 115不可用时使用）"), 12),
                 ]),
-                self._form_hint("目录配置"),
-                self._row([self._col(self._textarea("source_mappings", "来源目录映射JSON", rows=8), 12)]),
-                self._row([self._col(self._textarea("target_cids", "目标CID JSON", rows=10), 12)]),
+                self._row([
+                    self._col(self._textarea("cookie_text", "115 Cookie文本（文件不可用时兜底）", rows=3), 12),
+                ]),
+                self._form_hint("目录配置：填写115路径即可；target_root_path 下的分类目录需与 MoviePilot 分类一致"),
+                self._row([self._col(self._textarea("source_mappings", "来源与目标路径映射JSON", rows=8), 12)]),
+                self._row([self._col(self._textarea("target_cids", "目标CID JSON（高级覆盖；路径模式通常保持默认）", rows=8), 12)]),
                 self._form_hint("高级选项"),
                 self._row([self._col(self._textarea("exclude_keywords", "排除关键词，逗号分隔", rows=2), 12)]),
                 self._row([self._col(self._textarea("category_mapping", "分类别名映射JSON（可选）", rows=5), 12)]),
@@ -235,8 +242,9 @@ class P115MediaOrganizer(_PluginBase):
         last_plan = self.get_data("last_plan") or []
         last_result = self.get_data("last_result") or {}
         history = self.get_data("history") or []
-        p115 = P115Ops(self._cookie_path)
-        status = "p115client可用" if p115.available else p115.import_error or "p115client不可用"
+        p115 = self._p115_ops()
+        backend = "MoviePilot 115" if p115.backend == "moviepilot" else "p115client"
+        status = f"{backend}可用" if p115.available else p115.import_error or "115连接不可用"
         plan_summary = self._count_by(last_plan, "status")
         plan_rows = [[
             item.get("media_type"),
@@ -250,6 +258,7 @@ class P115MediaOrganizer(_PluginBase):
             item.get("name"),
             item.get("media_type"),
             item.get("source_path"),
+            item.get("target_root_path"),
             item.get("source_cid"),
         ] for item in self._source_mapping_list()]
         error_rows = [[item.get("source"), item.get("error")] for item in (last_result.get("errors") or [])[:20]]
@@ -266,7 +275,7 @@ class P115MediaOrganizer(_PluginBase):
             "component": "VContainer",
             "content": [
                 {"component": "VAlert", "props": {"type": "info", "variant": "tonal", "text": f"{status}；环境：{self._profile}；dry_run：{self._dry_run}；production执行：{self._allow_production_execute}"}},
-                self._section("来源映射", self._table(["名称", "类型", "路径", "CID"], mapping_rows)),
+                self._section("来源映射", self._table(["名称", "类型", "来源路径", "目标根路径", "来源CID"], mapping_rows)),
                 {"component": "VAlert", "props": {"type": "success", "variant": "tonal", "text": f"最近计划 {len(last_plan)} 条：planned {plan_summary.get('planned', 0)}，executed {plan_summary.get('executed', 0)}，failed {plan_summary.get('failed', 0)}，skipped {plan_summary.get('skipped', 0)}；展示前 {min(50, len(last_plan))} 条"}},
                 self._section("最近计划", self._table(["类型", "源文件", "目标分类", "目标路径", "状态", "警告"], plan_rows)),
                 {"component": "VAlert", "props": {"type": "warning" if last_result.get("failed", 0) else "success", "variant": "tonal", "text": f"最近执行：总计 {last_result.get('total', 0)}，成功 {last_result.get('success', 0)}，失败 {last_result.get('failed', 0)}，跳过 {last_result.get('skipped', 0)}，清理空目录 {len(cleaned_dirs)}；历史 {len(history)} 条"}},
@@ -307,7 +316,7 @@ class P115MediaOrganizer(_PluginBase):
             return guard
         plan = self.get_data("last_plan") or []
         result = ExecuteResult(plan_id=plan[0].get("plan_id") if plan else "", total=len(plan))
-        p115 = P115Ops(self._cookie_path)
+        p115 = self._p115_ops()
         history = self.get_data("history") or []
         for item in plan:
             if item.get("action") == "skip" or item.get("status") == "skipped":
@@ -355,6 +364,38 @@ class P115MediaOrganizer(_PluginBase):
         self.save_data("history", [])
         return schemas.Response(success=True, message="历史已清空")
 
+    def resolve_path_api(self, data: dict = None):
+        path = str((data or {}).get("path") or "").strip()
+        if not path:
+            return schemas.Response(success=False, message="path不能为空")
+        p115 = self._p115_ops()
+        if not p115.available:
+            return schemas.Response(success=False, message=p115.import_error or "p115client不可用")
+        try:
+            return schemas.Response(success=True, data={"path": path, "cid": p115.resolve_path(path)})
+        except Exception as err:
+            return schemas.Response(success=False, message=str(err))
+
+    def list_dir_api(self, data: dict = None):
+        path = str((data or {}).get("path") or "").strip()
+        cid = str((data or {}).get("cid") or "").strip()
+        p115 = self._p115_ops()
+        if not p115.available:
+            return schemas.Response(success=False, message=p115.import_error or "p115client不可用")
+        try:
+            if not cid:
+                cid = "0" if path in ("", "/") else p115.resolve_path(path)
+            entries = [{
+                "name": p115.entry_name(entry),
+                "cid": p115.entry_cid(entry),
+                "fid": p115.entry_fid(entry),
+                "is_dir": p115.is_folder(entry),
+                "size": p115.entry_size(entry),
+            } for entry in p115.list_entries(cid)]
+            return schemas.Response(success=True, data={"path": path or "/", "cid": cid, "items": entries})
+        except Exception as err:
+            return schemas.Response(success=False, message=str(err))
+
     def auto_run(self):
         response = self.dry_run_all()
         if not response.success:
@@ -369,19 +410,23 @@ class P115MediaOrganizer(_PluginBase):
         source = {
             "media_type": media_type,
             "source_cid": self._source_movie_cid if media_type == "movie" else self._source_tv_cid,
-            "source_path": "/最近接收/Movie" if media_type == "movie" else "/最近接收/TV",
+            "source_path": "/待整理/Movie" if media_type == "movie" else "/待整理/TV",
+            "target_root_path": "/媒体库/Movie" if media_type == "movie" else "/媒体库/TV",
         }
         return self._dry_run_source(source, save=save)
 
     def _dry_run_source(self, source: Dict[str, Any], save: bool = True):
         try:
-            p115 = P115Ops(self._cookie_path)
+            p115 = self._p115_ops()
             if not p115.available:
                 return schemas.Response(success=False, message=p115.import_error or "p115client不可用")
-            target_cids = self._current_target_cids()
             media_type = str(source.get("media_type") or "").lower()
             source_cid = str(source.get("source_cid") or "")
             source_path = str(source.get("source_path") or source_cid)
+            if not source_cid and source_path:
+                source_cid = p115.resolve_path(source_path)
+                source = dict(source, source_cid=source_cid)
+            target_cids = self._current_target_cids(p115=p115)
             if media_type not in ("movie", "tv") or not source_cid:
                 return schemas.Response(success=False, message=f"来源映射无效：{source}")
             items = p115.walk_media_items(
@@ -403,6 +448,7 @@ class P115MediaOrganizer(_PluginBase):
                 self.get_data("history") or [],
                 self._unrecognized_action,
                 source_root_cid=source_cid,
+                target_category_paths=self._target_category_paths(source),
             )
             if save:
                 self.save_data("last_plan", plan)
@@ -425,7 +471,7 @@ class P115MediaOrganizer(_PluginBase):
                 return schemas.Response(success=False, message="last_plan环境与当前配置不一致")
             if item.get("config_snapshot") != snapshot:
                 return schemas.Response(success=False, message="last_plan配置快照与当前配置不一致，请重新dry-run")
-        p115 = P115Ops(self._cookie_path)
+        p115 = self._p115_ops()
         if not p115.available:
             return schemas.Response(success=False, message=p115.import_error or "p115client不可用")
         return None
@@ -435,20 +481,31 @@ class P115MediaOrganizer(_PluginBase):
             "profile": self._profile,
             "source_mappings": self._source_mapping_list(),
             "category_mapping": self._category_mapping_dict(),
-            "target_cids": self._current_target_cids(),
+            "target_cids": self._target_cids_dict(),
             "conflict_strategy": self._conflict_strategy,
             "unrecognized_action": self._unrecognized_action,
             "delete_empty_source_dirs": self._delete_empty_source_dirs,
         }
 
-    def _current_target_cids(self) -> Dict[str, Dict[str, str]]:
+    def _current_target_cids(self, p115: P115Ops = None) -> Dict[str, Dict[str, str]]:
         target_cids = self._target_cids_dict()
         profile_cids = target_cids.get(self._profile) or DEFAULT_TARGET_CIDS.get(self._profile) or DEFAULT_TARGET_CIDS["workspace"]
-        return {
-            "movie": profile_cids.get("movie", {}),
-            "tv": profile_cids.get("tv", {}),
+        resolved = {
+            "movie": dict(profile_cids.get("movie", {})),
+            "tv": dict(profile_cids.get("tv", {})),
             "unrecognized": profile_cids.get("unrecognized", ""),
         }
+        self._resolve_target_paths(resolved, p115=p115)
+        return resolved
+
+
+    def _target_category_paths(self, source: Dict[str, Any]) -> Dict[str, str]:
+        target_root_path = str(source.get("target_root_path") or "").rstrip("/")
+        media_type = str(source.get("media_type") or "").lower()
+        if not target_root_path or media_type not in ("movie", "tv"):
+            return {}
+        categories = self._current_target_cids().get(media_type, {}).keys()
+        return {category: f"{target_root_path}/{category}" for category in categories}
 
     def _category_mapping_dict(self) -> Dict[str, Dict[str, str]]:
         try:
@@ -476,13 +533,15 @@ class P115MediaOrganizer(_PluginBase):
                     "name": "电影来源",
                     "media_type": "movie",
                     "source_cid": self._source_movie_cid,
-                    "source_path": "/最近接收/Movie",
+                    "source_path": "/待整理/Movie",
+                    "target_root_path": "/媒体库/Movie",
                 },
                 {
                     "name": "电视剧来源",
                     "media_type": "tv",
                     "source_cid": self._source_tv_cid,
-                    "source_path": "/最近接收/TV",
+                    "source_path": "/待整理/TV",
+                    "target_root_path": "/媒体库/TV",
                 },
             ]
         normalized = []
@@ -491,19 +550,50 @@ class P115MediaOrganizer(_PluginBase):
                 continue
             media_type = str(item.get("media_type") or item.get("type") or "").lower()
             source_cid = str(item.get("source_cid") or item.get("cid") or "")
-            if media_type not in ("movie", "tv") or not source_cid:
+            source_path = str(item.get("source_path") or item.get("path") or source_cid)
+            if media_type not in ("movie", "tv") or (not source_cid and not source_path):
                 continue
             normalized.append({
-                "name": str(item.get("name") or source_cid),
+                "name": str(item.get("name") or source_path or source_cid),
                 "media_type": media_type,
                 "source_cid": source_cid,
-                "source_path": str(item.get("source_path") or item.get("path") or source_cid),
+                "source_path": source_path,
+                "target_root_path": str(item.get("target_root_path") or ""),
             })
         return normalized
 
+    def _resolve_target_paths(self, target_cids: Dict[str, Any], p115: P115Ops = None):
+        for source in self._source_mapping_list():
+            media_type = source.get("media_type")
+            target_root_path = source.get("target_root_path")
+            if media_type not in ("movie", "tv") or not target_root_path:
+                continue
+            if p115 is None:
+                p115 = self._p115_ops()
+            if not p115.available:
+                return
+            for category in list(target_cids.get(media_type, {}).keys()):
+                if target_cids[media_type].get(category):
+                    continue
+                try:
+                    target_cids[media_type][category] = p115.resolve_path(f"{target_root_path.rstrip('/')}/{category}")
+                except Exception:
+                    pass
+
     def _cleanup_empty_source_dirs(self, p115: P115Ops) -> List[str]:
         cleaned = []
-        source_roots = {item["source_cid"] for item in self._source_mapping_list() if item.get("source_cid")}
+        source_roots = set()
+        for source in self._source_mapping_list():
+            source_cid = source.get("source_cid")
+            source_path = source.get("source_path")
+            if not source_cid and source_path:
+                try:
+                    source_cid = p115.resolve_path(source_path)
+                except Exception as err:
+                    logger.warning(f"解析115来源路径失败 {source_path}: {err}")
+                    continue
+            if source_cid:
+                source_roots.add(source_cid)
         for source_cid in source_roots:
             for empty_cid in p115.list_empty_dirs_bottom_up(source_cid, max(0, self._max_depth) + 2):
                 try:
@@ -515,6 +605,9 @@ class P115MediaOrganizer(_PluginBase):
 
     def _exclude_list(self) -> List[str]:
         return [item.strip() for item in self._exclude_keywords.split(",") if item.strip()]
+
+    def _p115_ops(self) -> P115Ops:
+        return P115Ops(cookie_path=self._cookie_path, cookie_text=self._cookie_text)
 
     def _notify_summary(self, title: str, result: Dict[str, Any]):
         text = f"计划 {result.get('total', 0)} 条，成功 {result.get('success', 0)}，失败 {result.get('failed', 0)}，跳过 {result.get('skipped', 0)}"
@@ -560,6 +653,7 @@ class P115MediaOrganizer(_PluginBase):
             "conflict_strategy": "skip",
             "unrecognized_action": "skip",
             "cookie_path": "/config/115-cookies.txt",
+            "cookie_text": "",
             "source_movie_cid": DEFAULT_SOURCE_CIDS["movie"],
             "source_tv_cid": DEFAULT_SOURCE_CIDS["tv"],
             "source_mappings": json.dumps(DEFAULT_SOURCE_MAPPINGS, ensure_ascii=False, indent=2),
