@@ -212,7 +212,7 @@ class P115MediaOrganizer(_PluginBase):
                     self._text("history_limit", "历史保留条数"),
                 ]),
                 self._textarea("exclude_keywords", "排除关键词，逗号分隔", rows=2),
-                self._textarea("category_mapping", "分类映射JSON", rows=8),
+                self._textarea("category_mapping", "分类别名映射JSON（可选）", rows=5),
                 self._textarea("target_cids", "目标CID JSON", rows=10),
             ],
         }], self._default_config()

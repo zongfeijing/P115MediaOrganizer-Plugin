@@ -4,22 +4,8 @@ from typing import Any, Dict, Optional, Tuple
 
 
 DEFAULT_CATEGORY_MAPPING = {
-    "movie": {
-        "动画电影": "动画电影",
-        "华语电影": "华语电影",
-        "外语电影": "外语电影",
-    },
-    "tv": {
-        "国漫": "国产剧",
-        "日番": "日韩剧",
-        "纪录片": "未分类",
-        "儿童": "未分类",
-        "综艺": "综艺",
-        "国产剧": "国产剧",
-        "欧美剧": "欧美剧",
-        "日韩剧": "日韩剧",
-        "未分类": "未分类",
-    },
+    "movie": {},
+    "tv": {},
 }
 
 MOVIE_FALLBACK_CATEGORY = "外语电影"
@@ -43,9 +29,7 @@ class CategoryMapper:
 
         if not source_category:
             warnings.append("MoviePilot分类为空")
-        if source_category and not mapped_category:
-            warnings.append(f"分类未映射：{source_category}")
-        target_category = mapped_category or fallback
+        target_category = mapped_category or source_category or fallback
 
         if target_category not in target_cids.get(media_type, {}):
             warnings.append(f"目标分类CID不存在：{target_category}")
