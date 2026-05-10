@@ -5,12 +5,12 @@
 ## 功能
 
 - 扫描 `/最近接收/Movie` 与 `/最近接收/TV` 对应的 115 CID。
-- 支持通过 `source_mappings` 配置多个来源目录，例如 workspace 的 `Incoming/Movie` -> `movie`、`Incoming/TV` -> `tv`。
+- 支持通过 `source_mappings` 配置多个来源目录，例如 `Incoming/Movie` -> `movie`、`Incoming/TV` -> `tv`。
 - 默认递归展开目录，只处理视频文件。
 - 使用 MoviePilot 内部识别链路识别媒体信息与分类。
 - 默认按 MoviePilot 分类名移动到同名目标分类目录。
 - 支持 dry-run 先生成计划，再执行最近一次保存的计划。
-- 执行前校验 profile、来源目录、目标 CID 等配置快照。
+- 执行前校验 来源目录、目标目录等配置快照。
 
 ## 不做什么
 
@@ -33,7 +33,6 @@
 
 默认配置为：
 
-- `profile=workspace`
 - `dry_run=true`
 - 未识别项目跳过
 - 目标重名跳过

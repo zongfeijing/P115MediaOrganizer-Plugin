@@ -35,35 +35,19 @@ DEFAULT_SOURCE_MAPPINGS = [
 ]
 
 DEFAULT_TARGET_CIDS = {
-    "workspace": {
-        "movie": {
-            "动画电影": "",
-            "外语电影": "",
-            "华语电影": "",
-        },
-        "tv": {
-            "未分类": "",
-            "综艺": "",
-            "日韩剧": "",
-            "欧美剧": "",
-            "国产剧": "",
-        },
-        "unrecognized": "",
+    "movie": {
+        "动画电影": "",
+        "外语电影": "",
+        "华语电影": "",
     },
-    "production": {
-        "movie": {
-            "动画电影": "",
-            "外语电影": "",
-            "华语电影": "",
-        },
-        "tv": {
-            "未分类": "",
-            "综艺": "",
-            "日韩剧": "",
-            "欧美剧": "",
-            "国产剧": "",
-        },
+    "tv": {
+        "未分类": "",
+        "综艺": "",
+        "日韩剧": "",
+        "欧美剧": "",
+        "国产剧": "",
     },
+    "unrecognized": "",
 }
 
 
@@ -82,7 +66,6 @@ class P115MediaOrganizer(_PluginBase):
     _notify = True
     _onlyonce = False
     _cron = ""
-    _profile = "workspace"
     _dry_run = True
     _delete_empty_source_dirs = True
     _max_depth = 5
@@ -108,7 +91,6 @@ class P115MediaOrganizer(_PluginBase):
         self._notify = bool(config.get("notify", True))
         self._onlyonce = bool(config.get("onlyonce", False))
         self._cron = str(config.get("cron") or "").strip()
-        self._profile = str(config.get("profile") or "workspace")
         self._dry_run = bool(config.get("dry_run", True))
         self._delete_empty_source_dirs = bool(config.get("delete_empty_source_dirs", True))
         self._max_depth = self._safe_int(config.get("max_depth"), 5)
@@ -181,8 +163,7 @@ class P115MediaOrganizer(_PluginBase):
                     self._col(self._switch("dry_run", "仅生成计划"), 3),
                 ]),
                 self._row([
-                    self._col(self._text("cron", "CRON表达式"), 6),
-                    self._col(self._select("profile", "运行环境", [{"title": "工作区", "value": "workspace"}, {"title": "生产", "value": "production"}]), 6),
+                    self._col(self._text("cron", "CRON表达式"), 12),
                 ]),
                 self._form_hint("执行策略"),
                 self._row([
@@ -250,7 +231,7 @@ class P115MediaOrganizer(_PluginBase):
         return [{
             "component": "VContainer",
             "content": [
-                {"component": "VAlert", "props": {"type": "info", "variant": "tonal", "text": f"{status}；环境：{self._profile}；dry_run：{self._dry_run}"}},
+                {"component": "VAlert", "props": {"type": "info", "variant": "tonal", "text": f"{status}；dry_run：{self._dry_run}"}},
                 self._section("来源映射", self._table(["名称", "类型", "来源路径", "目标根路径"], mapping_rows)),
                 {"component": "VAlert", "props": {"type": "success", "variant": "tonal", "text": f"最近计划 {len(last_plan)} 条：planned {plan_summary.get('planned', 0)}，executed {plan_summary.get('executed', 0)}，failed {plan_summary.get('failed', 0)}，skipped {plan_summary.get('skipped', 0)}；展示前 {min(50, len(last_plan))} 条"}},
                 self._section("最近计划", self._table(["类型", "源文件", "目标分类", "目标路径", "状态", "警告"], plan_rows)),
@@ -422,7 +403,6 @@ class P115MediaOrganizer(_PluginBase):
             plan = planner.build_plans(
                 media_type,
                 items,
-                self._profile,
                 self._config_snapshot(),
                 self.get_data("history") or [],
                 self._unrecognized_action,
@@ -443,8 +423,6 @@ class P115MediaOrganizer(_PluginBase):
             return schemas.Response(success=False, message="没有可执行的last_plan")
         snapshot = self._config_snapshot()
         for item in plan:
-            if item.get("profile") != self._profile:
-                return schemas.Response(success=False, message="last_plan环境与当前配置不一致")
             if item.get("config_snapshot") != snapshot:
                 return schemas.Response(success=False, message="last_plan配置快照与当前配置不一致，请重新dry-run")
         p115 = self._p115_ops()
@@ -454,7 +432,6 @@ class P115MediaOrganizer(_PluginBase):
 
     def _config_snapshot(self) -> Dict[str, Any]:
         return {
-            "profile": self._profile,
             "source_mappings": self._source_mapping_list(),
             "category_mapping": self._category_mapping_dict(),
             "target_cids": self._target_cids_dict(),
@@ -465,11 +442,10 @@ class P115MediaOrganizer(_PluginBase):
 
     def _current_target_cids(self, p115: P115Ops = None) -> Dict[str, Dict[str, str]]:
         target_cids = self._target_cids_dict()
-        profile_cids = target_cids.get(self._profile) or DEFAULT_TARGET_CIDS.get(self._profile) or DEFAULT_TARGET_CIDS["workspace"]
         resolved = {
-            "movie": dict(profile_cids.get("movie", {})),
-            "tv": dict(profile_cids.get("tv", {})),
-            "unrecognized": profile_cids.get("unrecognized", ""),
+            "movie": dict(target_cids.get("movie", {})),
+            "tv": dict(target_cids.get("tv", {})),
+            "unrecognized": target_cids.get("unrecognized", ""),
         }
         self._resolve_target_paths(resolved, p115=p115)
         return resolved
@@ -485,7 +461,9 @@ class P115MediaOrganizer(_PluginBase):
     def _target_cids_dict(self) -> Dict[str, Any]:
         try:
             data = json.loads(self._target_cids or "{}")
-            return data if isinstance(data, dict) else DEFAULT_TARGET_CIDS
+            if not isinstance(data, dict):
+                return DEFAULT_TARGET_CIDS
+            return data if ("movie" in data or "tv" in data) else DEFAULT_TARGET_CIDS
         except Exception:
             return DEFAULT_TARGET_CIDS
 
@@ -592,7 +570,6 @@ class P115MediaOrganizer(_PluginBase):
             "notify": True,
             "onlyonce": False,
             "cron": "",
-            "profile": "workspace",
             "dry_run": True,
             "delete_empty_source_dirs": True,
             "max_depth": 5,

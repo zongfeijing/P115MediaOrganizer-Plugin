@@ -25,7 +25,6 @@ class OrganizePlan:
     item_id: str
     created_at: str
     media_type: str
-    profile: str
     config_snapshot: Dict[str, Any]
     source_name: str
     source_ext: Optional[str]
