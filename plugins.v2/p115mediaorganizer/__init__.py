@@ -138,6 +138,7 @@ class P115MediaOrganizer(_PluginBase):
             {"path": "/dry_run_movie", "endpoint": self.dry_run_movie, "methods": ["POST"], "auth": "bear", "summary": "生成电影整理计划"},
             {"path": "/dry_run_tv", "endpoint": self.dry_run_tv, "methods": ["POST"], "auth": "bear", "summary": "生成电视剧整理计划"},
             {"path": "/dry_run_all", "endpoint": self.dry_run_all, "methods": ["POST"], "auth": "bear", "summary": "生成全部整理计划"},
+            {"path": "/trigger", "endpoint": self.trigger_api, "methods": ["POST"], "auth": "apikey", "summary": "外部触发整理"},
             {"path": "/execute_last_plan", "endpoint": self.execute_last_plan, "methods": ["POST"], "auth": "bear", "summary": "执行最近一次整理计划"},
             {"path": "/history", "endpoint": self.history, "methods": ["GET"], "auth": "bear", "summary": "查询整理历史"},
             {"path": "/clear_history", "endpoint": self.clear_history, "methods": ["POST"], "auth": "bear", "summary": "清空整理历史"},
@@ -274,6 +275,49 @@ class P115MediaOrganizer(_PluginBase):
         self.save_data("last_plan", plan)
         logger.info(f"【115云端媒体整理】dry-run 完成：计划 {len(plan)} 条")
         return schemas.Response(success=True, message=f"已生成整理计划：{len(plan)} 条", data=plan)
+
+
+    def trigger_api(self, data: dict = None):
+        data = data or {}
+        source = str(data.get("source") or "external").strip()
+        execute = self._safe_bool(data.get("execute"), default=not self._dry_run)
+        force_execute = self._safe_bool(data.get("force_execute"), default=False)
+        logger.info(
+            f"【115云端媒体整理】收到外部触发：source={source}，execute={execute}，"
+            f"force_execute={force_execute}，dry_run={self._dry_run}"
+        )
+
+        dry_run_response = self.dry_run_all()
+        if not dry_run_response.success:
+            return dry_run_response
+
+        plan = dry_run_response.data or []
+        result = {
+            "trigger_source": source,
+            "dry_run": self._dry_run,
+            "plan_count": len(plan),
+            "executed": False,
+            "execute_result": None,
+        }
+
+        if not execute:
+            return schemas.Response(success=True, message=f"已触发 dry-run：{len(plan)} 条计划", data=result)
+        if self._dry_run and not force_execute:
+            return schemas.Response(success=True, message=f"当前 dry_run=true，仅生成计划：{len(plan)} 条", data=result)
+        if not plan:
+            return schemas.Response(success=True, message="已触发整理：无可执行计划", data=result)
+
+        previous_dry_run = self._dry_run
+        if force_execute:
+            self._dry_run = False
+        try:
+            execute_response = self.execute_last_plan()
+        finally:
+            self._dry_run = previous_dry_run
+
+        result["executed"] = bool(execute_response.success)
+        result["execute_result"] = execute_response.data
+        return schemas.Response(success=execute_response.success, message=execute_response.message, data=result)
 
     def execute_last_plan(self):
         guard = self._execute_guard()
@@ -617,6 +661,18 @@ class P115MediaOrganizer(_PluginBase):
             "target_cids": json.dumps(DEFAULT_TARGET_CIDS, ensure_ascii=False, indent=2),
             "history_limit": 1000,
         }
+
+    @staticmethod
+    def _safe_bool(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y", "on", "执行", "是"}
+        return default
 
     @staticmethod
     def _safe_int(value: Any, default: int) -> int:

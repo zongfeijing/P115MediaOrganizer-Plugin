@@ -69,6 +69,24 @@ For example, if MoviePilot classifies a TV item as `欧美剧`, the plugin resol
 - `target_cids`: optional advanced override. Leave category CID values empty when using path-based mapping.
 - `category_mapping`: optional alias map only. Use it when MoviePilot's category name needs to be mapped to a different folder name.
 
+
+## Trigger From OpenClaw
+
+OpenClaw can trigger organizing after a 115 transfer finishes by calling the plugin API:
+
+```bash
+curl -X POST \
+  "http://MOVIEPILOT_HOST:3001/api/v1/plugin/P115MediaOrganizer/trigger?apikey=YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"source":"openclaw","execute":true}'
+```
+
+Behavior:
+
+- When `dry_run=true`, the trigger only generates a plan unless `force_execute=true` is also sent.
+- When `dry_run=false` and `execute=true`, the trigger generates a fresh plan and executes it.
+- When `execute=false`, it only generates a fresh plan.
+
 ## Details Page
 
 The plugin details page shows:

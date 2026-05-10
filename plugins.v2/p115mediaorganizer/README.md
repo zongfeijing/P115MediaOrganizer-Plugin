@@ -49,6 +49,22 @@
 3. 在插件详情页检查前 50 条计划和 warning。
 4. 确认无误后设置 `dry_run=false`，执行最近一次计划。
 
+
+## OpenClaw 触发示例
+
+OpenClaw 转存完成后可以调用插件 API：
+
+```bash
+curl -X POST \
+  "http://MOVIEPILOT_HOST:3001/api/v1/plugin/P115MediaOrganizer/trigger?apikey=YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"source":"openclaw","execute":true}'
+```
+
+- `dry_run=true` 时只生成计划，除非额外传 `force_execute=true`。
+- `dry_run=false` 且 `execute=true` 时，会先生成最新计划，再执行移动。
+- `execute=false` 时只生成计划。
+
 ## 注意事项
 
 - 路径配置会自动解析目标目录；只有需要手动覆盖时才配置 `target_cids`。
