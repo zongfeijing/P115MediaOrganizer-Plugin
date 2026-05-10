@@ -107,8 +107,13 @@ class P115MediaOrganizer(_PluginBase):
         self._category_mapping = config.get("category_mapping") or self._category_mapping
         self._target_cids = config.get("target_cids") or self._target_cids
         self._history_limit = self._safe_int(config.get("history_limit"), 1000)
+        logger.info(
+            f"【115云端媒体整理】插件初始化：enabled={self._enabled}，dry_run={self._dry_run}，"
+            f"onlyonce={self._onlyonce}，cron={self._cron or '未设置'}，来源映射={len(self._source_mapping_list())} 个"
+        )
 
         if self._onlyonce:
+            logger.info("【115云端媒体整理】已安排立即运行任务，约 3 秒后触发")
             self._scheduler = BackgroundScheduler(timezone=settings.TZ)
             self._scheduler.add_job(
                 func=self.auto_run,
@@ -258,13 +263,16 @@ class P115MediaOrganizer(_PluginBase):
         return self._dry_run_for("tv")
 
     def dry_run_all(self):
+        sources = self._source_mapping_list()
+        logger.info(f"【115云端媒体整理】开始 dry-run：来源 {len(sources)} 个")
         plan = []
-        for source in self._source_mapping_list():
+        for source in sources:
             response = self._dry_run_source(source, save=False)
             if not response.success:
                 return response
             plan.extend(response.data or [])
         self.save_data("last_plan", plan)
+        logger.info(f"【115云端媒体整理】dry-run 完成：计划 {len(plan)} 条")
         return schemas.Response(success=True, message=f"已生成整理计划：{len(plan)} 条", data=plan)
 
     def execute_last_plan(self):
@@ -272,6 +280,7 @@ class P115MediaOrganizer(_PluginBase):
         if guard:
             return guard
         plan = self.get_data("last_plan") or []
+        logger.info(f"【115云端媒体整理】开始执行 last_plan：计划 {len(plan)} 条")
         result = ExecuteResult(plan_id=plan[0].get("plan_id") if plan else "", total=len(plan))
         p115 = self._p115_ops()
         history = self.get_data("history") or []
@@ -283,19 +292,23 @@ class P115MediaOrganizer(_PluginBase):
                 outcome = p115.execute_move(item, conflict_strategy=self._conflict_strategy)
                 if outcome.get("success"):
                     result.success += 1
+                    logger.info(f"【115云端媒体整理】执行成功：{item.get('source_name')} -> {item.get('target_path')}")
                     item["status"] = "executed"
                     history.append(self._history_record(item, "executed", ""))
                 elif outcome.get("skipped"):
                     result.skipped += 1
+                    logger.info(f"【115云端媒体整理】执行跳过：{item.get('source_name')}，原因：{outcome.get('message')}")
                     item["status"] = "skipped"
                     item["error"] = outcome.get("message")
                 else:
                     result.failed += 1
+                    logger.info(f"【115云端媒体整理】执行失败：{item.get('source_name')}，原因：{outcome.get('message')}")
                     item["status"] = "failed"
                     item["error"] = outcome.get("message")
                     result.errors.append({"source": item.get("source_name"), "error": item.get("error")})
             except Exception as err:
                 result.failed += 1
+                logger.info(f"【115云端媒体整理】执行异常：{item.get('source_name')}，原因：{err}")
                 item["status"] = "failed"
                 item["error"] = str(err)
                 result.errors.append({"source": item.get("source_name"), "error": str(err)})
@@ -311,6 +324,10 @@ class P115MediaOrganizer(_PluginBase):
         self.save_data("history", history)
         self.save_data("last_plan", plan)
         self.save_data("last_result", result_dict)
+        logger.info(
+            f"【115云端媒体整理】执行完成：总计 {result.total}，成功 {result.success}，"
+            f"失败 {result.failed}，跳过 {result.skipped}，清理空目录 {len(cleaned_dirs)}"
+        )
         self._notify_summary("执行完成", result_dict)
         return schemas.Response(success=result.failed == 0, message=f"执行完成：成功 {result.success}，失败 {result.failed}，跳过 {result.skipped}，清理空目录 {len(cleaned_dirs)}", data=result_dict)
 
@@ -354,16 +371,20 @@ class P115MediaOrganizer(_PluginBase):
             return schemas.Response(success=False, message=str(err))
 
     def auto_run(self):
+        logger.info(f"【115云端媒体整理】自动运行开始：dry_run={self._dry_run}")
         response = self.dry_run_all()
         if not response.success:
+            logger.info(f"【115云端媒体整理】自动运行失败：{response.message}")
             self._notify_text("115云端媒体整理", response.message)
             return
         if not self._dry_run:
             self.execute_last_plan()
         else:
+            logger.info(f"【115云端媒体整理】自动运行 dry-run 完成：计划 {len(response.data or [])} 条")
             self._notify_text("115云端媒体整理", f"dry-run完成，计划 {len(response.data or [])} 条")
 
     def _dry_run_for(self, media_type: str, save: bool = True):
+        logger.info(f"【115云端媒体整理】开始 {media_type} dry-run")
         plan = []
         for source in self._source_mapping_list():
             if source.get("media_type") != media_type:
@@ -374,19 +395,23 @@ class P115MediaOrganizer(_PluginBase):
             plan.extend(response.data or [])
         if save:
             self.save_data("last_plan", plan)
+        logger.info(f"【115云端媒体整理】{media_type} dry-run 完成：计划 {len(plan)} 条")
         return schemas.Response(success=True, message=f"已生成{media_type}整理计划：{len(plan)} 条", data=plan)
 
     def _dry_run_source(self, source: Dict[str, Any], save: bool = True):
         try:
             p115 = self._p115_ops()
             if not p115.available:
+                logger.info(f"【115云端媒体整理】p115client不可用：{p115.import_error}")
                 return schemas.Response(success=False, message=p115.import_error or "p115client不可用")
             media_type = str(source.get("media_type") or "").lower()
             source_cid = str(source.get("source_cid") or "")
             source_path = str(source.get("source_path") or source_cid)
+            logger.info(f"【115云端媒体整理】开始扫描来源：类型={media_type}，路径={source_path}")
             if not source_cid and source_path:
                 source_cid = p115.resolve_path(source_path)
                 source = dict(source, source_cid=source_cid)
+                logger.info(f"【115云端媒体整理】来源路径解析成功：{source_path} -> {source_cid}")
             target_cids = self._current_target_cids(p115=p115)
             if media_type not in ("movie", "tv") or not source_cid:
                 return schemas.Response(success=False, message=f"来源映射无效：{source}")
@@ -398,6 +423,7 @@ class P115MediaOrganizer(_PluginBase):
                 exclude_keywords=self._exclude_list(),
                 max_items=max(0, self._max_items_per_run),
             )
+            logger.info(f"【115云端媒体整理】来源扫描完成：{source_path}，候选视频 {len(items)} 个")
             mapper = CategoryMapper(self._category_mapping_dict())
             planner = Planner(mapper, target_cids)
             plan = planner.build_plans(
@@ -410,6 +436,7 @@ class P115MediaOrganizer(_PluginBase):
             )
             if save:
                 self.save_data("last_plan", plan)
+            logger.info(f"【115云端媒体整理】来源计划生成完成：{source_path}，计划 {len(plan)} 条")
             return schemas.Response(success=True, message=f"已生成{media_type}整理计划：{len(plan)} 条", data=plan)
         except Exception as err:
             logger.exception(f"生成115整理计划失败：{err}")
@@ -524,13 +551,16 @@ class P115MediaOrganizer(_PluginBase):
                     continue
             if source_cid:
                 source_roots.add(source_cid)
+        logger.info(f"【115云端媒体整理】开始清理空来源目录：来源根 {len(source_roots)} 个")
         for source_cid in source_roots:
             for empty_cid in p115.list_empty_dirs_bottom_up(source_cid, max(0, self._max_depth) + 2):
                 try:
                     p115.delete(empty_cid)
                     cleaned.append(empty_cid)
+                    logger.info(f"【115云端媒体整理】已删除空来源目录：{empty_cid}")
                 except Exception as err:
                     logger.warning(f"删除115空源目录失败 {empty_cid}: {err}")
+        logger.info(f"【115云端媒体整理】空来源目录清理完成：{len(cleaned)} 个")
         return cleaned
 
     def _exclude_list(self) -> List[str]:
