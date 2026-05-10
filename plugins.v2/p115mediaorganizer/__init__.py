@@ -89,8 +89,6 @@ class P115MediaOrganizer(_PluginBase):
     _cron = ""
     _profile = "workspace"
     _dry_run = True
-    _allow_production_execute = False
-    _move_whole_dirs = False
     _delete_empty_source_dirs = True
     _max_depth = 5
     _max_items_per_run = 200
@@ -119,8 +117,6 @@ class P115MediaOrganizer(_PluginBase):
         self._cron = str(config.get("cron") or "").strip()
         self._profile = str(config.get("profile") or "workspace")
         self._dry_run = bool(config.get("dry_run", True))
-        self._allow_production_execute = bool(config.get("allow_production_execute", False))
-        self._move_whole_dirs = bool(config.get("move_whole_dirs", False))
         self._delete_empty_source_dirs = bool(config.get("delete_empty_source_dirs", True))
         self._max_depth = self._safe_int(config.get("max_depth"), 5)
         self._max_items_per_run = self._safe_int(config.get("max_items_per_run"), 200)
@@ -188,18 +184,14 @@ class P115MediaOrganizer(_PluginBase):
             "content": [
                 self._form_hint("基础设置"),
                 self._row([
-                    self._col(self._switch("enabled", "启用插件"), 4),
-                    self._col(self._switch("notify", "发送通知"), 4),
-                    self._col(self._switch("onlyonce", "立即运行一次"), 4),
+                    self._col(self._switch("enabled", "启用插件"), 3),
+                    self._col(self._switch("notify", "发送通知"), 3),
+                    self._col(self._switch("onlyonce", "立即运行一次"), 3),
+                    self._col(self._switch("dry_run", "仅生成计划"), 3),
                 ]),
                 self._row([
                     self._col(self._text("cron", "CRON表达式"), 6),
                     self._col(self._select("profile", "运行环境", [{"title": "工作区", "value": "workspace"}, {"title": "生产", "value": "production"}]), 6),
-                ]),
-                self._row([
-                    self._col(self._switch("dry_run", "仅生成计划"), 4),
-                    self._col(self._switch("allow_production_execute", "允许生产执行"), 4),
-                    self._col(self._switch("move_whole_dirs", "整目录移动"), 4),
                 ]),
                 self._form_hint("执行策略"),
                 self._row([
@@ -273,7 +265,7 @@ class P115MediaOrganizer(_PluginBase):
         return [{
             "component": "VContainer",
             "content": [
-                {"component": "VAlert", "props": {"type": "info", "variant": "tonal", "text": f"{status}；环境：{self._profile}；dry_run：{self._dry_run}；production执行：{self._allow_production_execute}"}},
+                {"component": "VAlert", "props": {"type": "info", "variant": "tonal", "text": f"{status}；环境：{self._profile}；dry_run：{self._dry_run}"}},
                 self._section("来源映射", self._table(["名称", "类型", "来源路径", "目标根路径", "来源CID"], mapping_rows)),
                 {"component": "VAlert", "props": {"type": "success", "variant": "tonal", "text": f"最近计划 {len(last_plan)} 条：planned {plan_summary.get('planned', 0)}，executed {plan_summary.get('executed', 0)}，failed {plan_summary.get('failed', 0)}，skipped {plan_summary.get('skipped', 0)}；展示前 {min(50, len(last_plan))} 条"}},
                 self._section("最近计划", self._table(["类型", "源文件", "目标分类", "目标路径", "状态", "警告"], plan_rows)),
@@ -432,7 +424,6 @@ class P115MediaOrganizer(_PluginBase):
                 source_cid=source_cid,
                 source_path=source_path,
                 max_depth=max(0, self._max_depth),
-                move_whole_dirs=self._move_whole_dirs,
                 min_file_size=max(0, self._min_file_size_mb) * 1024 * 1024,
                 exclude_keywords=self._exclude_list(),
                 max_items=max(0, self._max_items_per_run),
@@ -461,8 +452,6 @@ class P115MediaOrganizer(_PluginBase):
         plan = self.get_data("last_plan") or []
         if not plan:
             return schemas.Response(success=False, message="没有可执行的last_plan")
-        if self._profile == "production" and not self._allow_production_execute:
-            return schemas.Response(success=False, message="production执行需要开启allow_production_execute")
         snapshot = self._config_snapshot()
         for item in plan:
             if item.get("profile") != self._profile:
@@ -632,8 +621,6 @@ class P115MediaOrganizer(_PluginBase):
             "cron": "",
             "profile": "workspace",
             "dry_run": True,
-            "allow_production_execute": False,
-            "move_whole_dirs": False,
             "delete_empty_source_dirs": True,
             "max_depth": 5,
             "max_items_per_run": 200,

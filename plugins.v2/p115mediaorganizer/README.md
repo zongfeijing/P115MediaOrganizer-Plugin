@@ -35,24 +35,20 @@
 
 - `profile=workspace`
 - `dry_run=true`
-- `allow_production_execute=false`
 - 未识别项目跳过
 - 目标重名跳过
 
-执行生产目录整理必须同时满足：
+执行整理必须满足：
 
 - `dry_run=false`
-- `profile=production`
-- `allow_production_execute=true`
 - 最近一次计划的配置快照与当前配置完全一致
 
 ## 推荐流程
 
-1. 保持 `profile=workspace` 和 `dry_run=true`。
+1. 保持 `dry_run=true`。
 2. 调用 dry-run API 或使用立即运行生成计划。
 3. 在插件详情页检查前 50 条计划和 warning。
 4. 确认无误后设置 `dry_run=false`，执行最近一次计划。
-5. workspace 验证完成后，再切到 production 并重新 dry-run。
 
 ## 注意事项
 

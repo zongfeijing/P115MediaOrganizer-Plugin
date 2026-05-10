@@ -93,7 +93,6 @@ class P115Ops:
         source_cid: str,
         source_path: str,
         max_depth: int,
-        move_whole_dirs: bool,
         min_file_size: int = 0,
         exclude_keywords: Optional[Iterable[str]] = None,
         max_items: int = 0,
@@ -115,10 +114,7 @@ class P115Ops:
                 if is_dir:
                     if name in SKIP_DIR_NAMES:
                         continue
-                    if move_whole_dirs:
-                        items.append(self._to_media_item(entry, cid, path_hint))
-                    else:
-                        walk(self.entry_cid(entry), path_hint, depth + 1)
+                    walk(self.entry_cid(entry), path_hint, depth + 1)
                     continue
 
                 ext = PurePosixPath(name).suffix.lower()
