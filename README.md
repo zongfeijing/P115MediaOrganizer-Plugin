@@ -68,7 +68,6 @@ For example, if MoviePilot classifies a TV item as `欧美剧`, the plugin resol
 
 - `target_cids`: optional advanced override. Leave category CID values empty when using path-based mapping.
 - `category_mapping`: optional alias map only. Use it when MoviePilot's category name needs to be mapped to a different folder name.
-- `source_cid`, `source_movie_cid`, `source_tv_cid`: legacy compatibility fields. Usually not needed.
 
 ## Details Page
 
@@ -84,6 +83,5 @@ The plugin details page shows:
 ## Safety Notes
 
 - Defaults to dry-run.
-- Production execution requires explicitly enabling production execution.
 - Empty source directory cleanup only runs under configured source roots.
 - Keep real cookies, CIDs, and private 115 paths out of this public repository.

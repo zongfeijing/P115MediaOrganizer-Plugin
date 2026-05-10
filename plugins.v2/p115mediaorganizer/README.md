@@ -52,8 +52,8 @@
 
 ## 注意事项
 
-- 目标 CID 与个人 115 网盘强绑定，请在高级配置中按需覆盖 `target_cids`。
-- 来源目录与个人 115 网盘强绑定，请在高级配置中按需覆盖 `source_mappings`。
+- 路径配置会自动解析目标目录；只有需要手动覆盖时才配置 `target_cids`。
+- 来源目录通过 `source_mappings` 配置 115 路径。
 - `category_mapping` 是可选别名映射；如果 MoviePilot 分类名和目标目录名一致，可以保持默认空映射。
 - 默认会在执行后删除来源根目录下面的空目录，但不会删除来源根目录本身。
 - 如果 115 返回 `errno=990009` 或类似「操作尚未执行完成」，插件会记录失败，不会无限重试。
@@ -64,16 +64,16 @@
 ```json
 [
   {
-    "name": "workspace电影待处理",
+    "name": "电影待处理",
     "media_type": "movie",
-    "source_cid": "你的电影待处理目录CID",
-    "source_path": "/你的媒体库/_Workspace/Incoming/Movie"
+    "source_path": "/待整理/Movie",
+    "target_root_path": "/媒体库/Movie"
   },
   {
-    "name": "workspace电视剧待处理",
+    "name": "电视剧待处理",
     "media_type": "tv",
-    "source_cid": "你的电视剧待处理目录CID",
-    "source_path": "/你的媒体库/_Workspace/Incoming/TV"
+    "source_path": "/待整理/TV",
+    "target_root_path": "/媒体库/TV"
   }
 ]
 ```
