@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+from uuid import uuid4
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -58,7 +59,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "0.2.2"
+    plugin_version = "0.2.3"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -87,6 +88,7 @@ class P115MediaOrganizer(_PluginBase):
     _category_mapping = json.dumps(DEFAULT_CATEGORY_MAPPING, ensure_ascii=False, indent=2)
     _target_cids = json.dumps(DEFAULT_TARGET_CIDS, ensure_ascii=False, indent=2)
     _history_limit = 1000
+    _run_limit = 100
     _scheduler = None
 
     def init_plugin(self, config: dict = None):
@@ -114,6 +116,7 @@ class P115MediaOrganizer(_PluginBase):
         self._category_mapping = config.get("category_mapping") or self._category_mapping
         self._target_cids = config.get("target_cids") or self._target_cids
         self._history_limit = self._safe_int(config.get("history_limit"), 1000)
+        self._run_limit = self._safe_int(config.get("run_limit"), 100)
         logger.info(
             f"【115云端媒体整理】插件初始化：enabled={self._enabled}，dry_run={self._dry_run}，"
             f"onlyonce={self._onlyonce}，cron={self._cron or '未设置'}，来源映射={len(self._source_mapping_list())} 个"
@@ -200,6 +203,9 @@ class P115MediaOrganizer(_PluginBase):
                     self._col(self._text("sleep_between_batches", "批间隔秒"), 4),
                     self._col(self._text("history_limit", "历史保留条数"), 4),
                 ]),
+                self._row([
+                    self._col(self._text("run_limit", "批次保留数量"), 4),
+                ]),
                 self._form_hint("115 连接"),
                 self._row([
                     self._col(self._text("cookie_path", "115 Cookie文件路径"), 12),
@@ -220,6 +226,7 @@ class P115MediaOrganizer(_PluginBase):
         last_plan = self.get_data("last_plan") or []
         last_result = self.get_data("last_result") or {}
         history = self.get_data("history") or []
+        runs = self.get_data("runs") or []
         p115 = self._p115_ops()
         status = "p115client可用" if p115.available else p115.import_error or "p115client不可用"
         plan_summary = self._count_by(last_plan, "status")
@@ -246,8 +253,21 @@ class P115MediaOrganizer(_PluginBase):
             "成功" if item.get("success") else "失败",
             item.get("message"),
         ] for item in (last_result.get("plex_refresh") or [])[:50]]
+        run_rows = [[
+            item.get("time"),
+            item.get("run_id"),
+            item.get("source") or "manual",
+            item.get("total"),
+            item.get("success"),
+            item.get("failed"),
+            item.get("skipped"),
+            item.get("plex_refresh_count"),
+            item.get("cleaned_empty_dirs"),
+        ] for item in list(reversed(runs))[:10]]
         history_rows = [[
             item.get("time"),
+            item.get("run_id"),
+            item.get("media_type"),
             item.get("source_name"),
             item.get("target_category"),
             item.get("target_name"),
@@ -262,10 +282,11 @@ class P115MediaOrganizer(_PluginBase):
                 self._section("来源映射", self._table(["名称", "类型", "来源路径", "目标根路径"], mapping_rows)),
                 {"component": "VAlert", "props": {"type": "success", "variant": "tonal", "text": f"最近计划 {len(last_plan)} 条：planned {plan_summary.get('planned', 0)}，executed {plan_summary.get('executed', 0)}，failed {plan_summary.get('failed', 0)}，skipped {plan_summary.get('skipped', 0)}；展示前 {min(50, len(last_plan))} 条"}},
                 self._section("最近计划", self._table(["类型", "源文件", "目标分类", "目标路径", "状态", "警告"], plan_rows)),
-                {"component": "VAlert", "props": {"type": "warning" if last_result.get("failed", 0) else "success", "variant": "tonal", "text": f"最近执行：总计 {last_result.get('total', 0)}，成功 {last_result.get('success', 0)}，失败 {last_result.get('failed', 0)}，跳过 {last_result.get('skipped', 0)}，清理空目录 {len(cleaned_dirs)}；历史 {len(history)} 条"}},
+                {"component": "VAlert", "props": {"type": "warning" if last_result.get("failed", 0) else "success", "variant": "tonal", "text": f"最近执行：总计 {last_result.get('total', 0)}，成功 {last_result.get('success', 0)}，失败 {last_result.get('failed', 0)}，跳过 {last_result.get('skipped', 0)}，Plex刷新 {len(last_result.get('plex_refresh') or [])} 条，清理空目录 {len(cleaned_dirs)}；批次 {len(runs)} 个，历史 {len(history)} 条"}},
+                self._section("最近批次", self._table(["时间", "Run ID", "来源", "总计", "成功", "失败", "跳过", "Plex刷新", "清理空目录"], run_rows)),
                 self._section("Plex刷新", self._table(["服务器", "类型", "分类", "目标路径", "状态", "消息"], plex_rows)) if plex_rows else {"component": "div"},
                 self._section("失败项", self._table(["源文件", "错误"], error_rows)) if error_rows else {"component": "div"},
-                self._section("最近历史", self._table(["时间", "源文件", "目标分类", "目标名称", "状态", "错误"], history_rows)),
+                self._section("最近明细", self._table(["时间", "Run ID", "类型", "源文件", "目标分类", "目标名称", "状态", "错误"], history_rows)),
             ],
         }]
 
@@ -333,7 +354,7 @@ class P115MediaOrganizer(_PluginBase):
         if force_execute:
             self._dry_run = False
         try:
-            execute_response = self.execute_last_plan()
+            execute_response = self.execute_last_plan(trigger_source=source)
         finally:
             self._dry_run = previous_dry_run
 
@@ -341,19 +362,27 @@ class P115MediaOrganizer(_PluginBase):
         result["execute_result"] = execute_response.data
         return schemas.Response(success=execute_response.success, message=execute_response.message, data=result)
 
-    def execute_last_plan(self):
+    def execute_last_plan(self, trigger_source: str = "manual"):
         guard = self._execute_guard()
         if guard:
             return guard
         plan = self.get_data("last_plan") or []
-        logger.info(f"【115云端媒体整理】开始执行 last_plan：计划 {len(plan)} 条")
+        run_id = datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{uuid4().hex[:6]}"
+        started_at = datetime.now()
+        logger.info(f"【115云端媒体整理】开始执行 last_plan：run_id={run_id}，计划 {len(plan)} 条")
         result = ExecuteResult(plan_id=plan[0].get("plan_id") if plan else "", total=len(plan))
         p115 = self._p115_ops()
         history = self.get_data("history") or []
+        run_history = []
         success_items = []
         for item in plan:
             if item.get("action") == "skip" or item.get("status") == "skipped":
                 result.skipped += 1
+                item["status"] = "skipped"
+                item["error"] = item.get("error") or "计划项标记为跳过"
+                record = self._history_record(item, "skipped", item.get("error") or "", run_id=run_id)
+                history.append(record)
+                run_history.append(record)
                 continue
             try:
                 outcome = p115.execute_move(item, conflict_strategy=self._conflict_strategy)
@@ -364,24 +393,35 @@ class P115MediaOrganizer(_PluginBase):
                     item["target_name"] = outcome.get("target_name") or item.get("target_name")
                     item["target_parent_cid"] = outcome.get("target_parent_cid") or item.get("target_parent_cid")
                     success_items.append(dict(item))
-                    history.append(self._history_record(item, "executed", ""))
+                    record = self._history_record(item, "executed", "", run_id=run_id)
+                    history.append(record)
+                    run_history.append(record)
                 elif outcome.get("skipped"):
                     result.skipped += 1
                     logger.info(f"【115云端媒体整理】执行跳过：{item.get('source_name')}，原因：{outcome.get('message')}")
                     item["status"] = "skipped"
                     item["error"] = outcome.get("message")
+                    record = self._history_record(item, "skipped", item.get("error") or "", run_id=run_id)
+                    history.append(record)
+                    run_history.append(record)
                 else:
                     result.failed += 1
                     logger.info(f"【115云端媒体整理】执行失败：{item.get('source_name')}，原因：{outcome.get('message')}")
                     item["status"] = "failed"
                     item["error"] = outcome.get("message")
                     result.errors.append({"source": item.get("source_name"), "error": item.get("error")})
+                    record = self._history_record(item, "failed", item.get("error") or "", run_id=run_id)
+                    history.append(record)
+                    run_history.append(record)
             except Exception as err:
                 result.failed += 1
                 logger.info(f"【115云端媒体整理】执行异常：{item.get('source_name')}，原因：{err}")
                 item["status"] = "failed"
                 item["error"] = str(err)
                 result.errors.append({"source": item.get("source_name"), "error": str(err)})
+                record = self._history_record(item, "failed", item.get("error") or "", run_id=run_id)
+                history.append(record)
+                run_history.append(record)
             time.sleep(max(0.0, self._sleep_between_batches))
         cleaned_dirs = []
         if self._delete_empty_source_dirs:
@@ -391,7 +431,15 @@ class P115MediaOrganizer(_PluginBase):
         else:
             result_dict = result.to_dict()
         result_dict["plex_refresh"] = self._refresh_plex_after_success(success_items)
+        result_dict["run_id"] = run_id
+        result_dict["trigger_source"] = trigger_source or "manual"
+        result_dict["started_at"] = started_at.strftime("%Y-%m-%d %H:%M:%S")
+        finished_at = datetime.now()
+        result_dict["finished_at"] = finished_at.strftime("%Y-%m-%d %H:%M:%S")
+        result_dict["duration_seconds"] = round((finished_at - started_at).total_seconds(), 2)
+        runs = self._append_run_summary(run_id, started_at, result_dict, run_history)
         history = history[-max(1, self._history_limit):]
+        self.save_data("runs", runs)
         self.save_data("history", history)
         self.save_data("last_plan", plan)
         self.save_data("last_result", result_dict)
@@ -403,10 +451,14 @@ class P115MediaOrganizer(_PluginBase):
         return schemas.Response(success=result.failed == 0, message=f"执行完成：成功 {result.success}，失败 {result.failed}，跳过 {result.skipped}，清理空目录 {len(cleaned_dirs)}", data=result_dict)
 
     def history(self):
-        return schemas.Response(success=True, data=self.get_data("history") or [])
+        return schemas.Response(success=True, data={
+            "runs": self.get_data("runs") or [],
+            "history": self.get_data("history") or [],
+        })
 
     def clear_history(self):
         self.save_data("history", [])
+        self.save_data("runs", [])
         return schemas.Response(success=True, message="历史已清空")
 
     def resolve_path_api(self, data: dict = None):
@@ -759,16 +811,55 @@ class P115MediaOrganizer(_PluginBase):
         if self._notify:
             self.post_message(mtype=NotificationType.Plugin, title=title, text=text)
 
+    def _append_run_summary(
+        self,
+        run_id: str,
+        started_at: datetime,
+        result: Dict[str, Any],
+        run_history: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        runs = self.get_data("runs") or []
+        media_counts = self._count_by(run_history, "media_type")
+        category_counts = self._count_by(run_history, "target_category")
+        sample_items = [{
+            "source_name": item.get("source_name"),
+            "target_name": item.get("target_name"),
+            "target_category": item.get("target_category"),
+            "status": item.get("status"),
+            "error": item.get("error"),
+        } for item in run_history[:10]]
+        runs.append({
+            "run_id": run_id,
+            "time": started_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "finished_at": result.get("finished_at"),
+            "duration_seconds": result.get("duration_seconds"),
+            "source": result.get("trigger_source") or "manual",
+            "plan_id": result.get("plan_id"),
+            "total": result.get("total", 0),
+            "success": result.get("success", 0),
+            "failed": result.get("failed", 0),
+            "skipped": result.get("skipped", 0),
+            "plex_refresh_count": len(result.get("plex_refresh") or []),
+            "cleaned_empty_dirs": len(result.get("cleaned_empty_dirs") or []),
+            "media_counts": media_counts,
+            "category_counts": category_counts,
+            "sample_items": sample_items,
+        })
+        return runs[-max(1, self._run_limit):]
+
     @staticmethod
-    def _history_record(item: Dict[str, Any], status: str, error: str) -> Dict[str, Any]:
+    def _history_record(item: Dict[str, Any], status: str, error: str, run_id: str = "") -> Dict[str, Any]:
         return {
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "run_id": run_id,
             "item_id": item.get("item_id"),
             "source_fid": item.get("source_fid"),
             "source_cid": item.get("source_cid"),
+            "media_type": item.get("media_type"),
             "source_name": item.get("source_name"),
             "target_category": item.get("target_category"),
             "target_name": item.get("target_name"),
+            "target_path": item.get("target_path"),
             "status": status,
             "error": error,
         }
@@ -797,6 +888,7 @@ class P115MediaOrganizer(_PluginBase):
             "category_mapping": json.dumps(DEFAULT_CATEGORY_MAPPING, ensure_ascii=False, indent=2),
             "target_cids": json.dumps(DEFAULT_TARGET_CIDS, ensure_ascii=False, indent=2),
             "history_limit": 1000,
+            "run_limit": 100,
         }
 
     @staticmethod

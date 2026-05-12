@@ -3,11 +3,12 @@
     "name": "115云端媒体整理",
     "description": "将115待处理目录中的媒体云端整理到媒体库，并使用 MoviePilot 内部识别与分类。",
     "labels": "115,整理,媒体库,云端整理",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "icon": "clouddisk.png",
     "author": "Zongfei",
     "level": 2,
     "history": {
+      "v0.2.3": "历史展示改为批次摘要加最近明细，支持run_id、触发来源和批次保留上限。",
       "v0.2.2": "整理命名改为复用MoviePilot重命名模板与智能重命名事件，兜底格式对齐MoviePilot默认格式。",
       "v0.2.1": "整理成功后按本次涉及分类刷新对应Plex媒体库。",
       "v0.2.0": "使用p115client Cookie连接115，支持路径优先目录配置、Cookie文本兜底和115目录解析API。",

@@ -108,7 +108,7 @@ The plugin details page shows:
 - source mappings
 - latest dry-run plan
 - execution result and errors
-- recent history
+- recent run summaries and history details
 - cleaned empty source directory count
 
 ## Safety Notes
