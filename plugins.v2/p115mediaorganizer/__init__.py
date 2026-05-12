@@ -59,7 +59,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "0.2.3"
+    plugin_version = "0.2.4"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -89,6 +89,10 @@ class P115MediaOrganizer(_PluginBase):
     _target_cids = json.dumps(DEFAULT_TARGET_CIDS, ensure_ascii=False, indent=2)
     _history_limit = 1000
     _run_limit = 100
+    _history_page = 1
+    _history_page_size = 50
+    _run_page = 1
+    _run_page_size = 10
     _scheduler = None
 
     def init_plugin(self, config: dict = None):
@@ -117,6 +121,10 @@ class P115MediaOrganizer(_PluginBase):
         self._target_cids = config.get("target_cids") or self._target_cids
         self._history_limit = self._safe_int(config.get("history_limit"), 1000)
         self._run_limit = self._safe_int(config.get("run_limit"), 100)
+        self._history_page = max(1, self._safe_int(config.get("history_page"), 1))
+        self._history_page_size = self._clamp_int(config.get("history_page_size"), 50, 10, 200)
+        self._run_page = max(1, self._safe_int(config.get("run_page"), 1))
+        self._run_page_size = self._clamp_int(config.get("run_page_size"), 10, 5, 100)
         logger.info(
             f"【115云端媒体整理】插件初始化：enabled={self._enabled}，dry_run={self._dry_run}，"
             f"onlyonce={self._onlyonce}，cron={self._cron or '未设置'}，来源映射={len(self._source_mapping_list())} 个"
@@ -206,6 +214,13 @@ class P115MediaOrganizer(_PluginBase):
                 self._row([
                     self._col(self._text("run_limit", "批次保留数量"), 4),
                 ]),
+                self._form_hint("历史分页：详情页只渲染当前页，翻页后保存配置再打开详情页"),
+                self._row([
+                    self._col(self._text("run_page", "批次页码"), 3),
+                    self._col(self._text("run_page_size", "批次每页"), 3),
+                    self._col(self._text("history_page", "明细页码"), 3),
+                    self._col(self._text("history_page_size", "明细每页"), 3),
+                ]),
                 self._form_hint("115 连接"),
                 self._row([
                     self._col(self._text("cookie_path", "115 Cookie文件路径"), 12),
@@ -227,6 +242,8 @@ class P115MediaOrganizer(_PluginBase):
         last_result = self.get_data("last_result") or {}
         history = self.get_data("history") or []
         runs = self.get_data("runs") or []
+        run_page_items, run_page_meta = self._paginate(list(reversed(runs)), self._run_page, self._run_page_size)
+        history_page_items, history_page_meta = self._paginate(list(reversed(history)), self._history_page, self._history_page_size)
         p115 = self._p115_ops()
         status = "p115client可用" if p115.available else p115.import_error or "p115client不可用"
         plan_summary = self._count_by(last_plan, "status")
@@ -263,7 +280,7 @@ class P115MediaOrganizer(_PluginBase):
             item.get("skipped"),
             item.get("plex_refresh_count"),
             item.get("cleaned_empty_dirs"),
-        ] for item in list(reversed(runs))[:10]]
+        ] for item in run_page_items]
         history_rows = [[
             item.get("time"),
             item.get("run_id"),
@@ -273,7 +290,7 @@ class P115MediaOrganizer(_PluginBase):
             item.get("target_name"),
             item.get("status"),
             item.get("error"),
-        ] for item in list(reversed(history))[:50]]
+        ] for item in history_page_items]
         cleaned_dirs = last_result.get("cleaned_empty_dirs") or []
         return [{
             "component": "VContainer",
@@ -283,6 +300,7 @@ class P115MediaOrganizer(_PluginBase):
                 {"component": "VAlert", "props": {"type": "success", "variant": "tonal", "text": f"最近计划 {len(last_plan)} 条：planned {plan_summary.get('planned', 0)}，executed {plan_summary.get('executed', 0)}，failed {plan_summary.get('failed', 0)}，skipped {plan_summary.get('skipped', 0)}；展示前 {min(50, len(last_plan))} 条"}},
                 self._section("最近计划", self._table(["类型", "源文件", "目标分类", "目标路径", "状态", "警告"], plan_rows)),
                 {"component": "VAlert", "props": {"type": "warning" if last_result.get("failed", 0) else "success", "variant": "tonal", "text": f"最近执行：总计 {last_result.get('total', 0)}，成功 {last_result.get('success', 0)}，失败 {last_result.get('failed', 0)}，跳过 {last_result.get('skipped', 0)}，Plex刷新 {len(last_result.get('plex_refresh') or [])} 条，清理空目录 {len(cleaned_dirs)}；批次 {len(runs)} 个，历史 {len(history)} 条"}},
+                {"component": "VAlert", "props": {"type": "info", "variant": "tonal", "text": f"批次分页：第 {run_page_meta.get('page')} / {run_page_meta.get('total_pages')} 页，显示 {run_page_meta.get('start')} - {run_page_meta.get('end')} / {run_page_meta.get('total')}；明细分页：第 {history_page_meta.get('page')} / {history_page_meta.get('total_pages')} 页，显示 {history_page_meta.get('start')} - {history_page_meta.get('end')} / {history_page_meta.get('total')}"}},
                 self._section("最近批次", self._table(["时间", "Run ID", "来源", "总计", "成功", "失败", "跳过", "Plex刷新", "清理空目录"], run_rows)),
                 self._section("Plex刷新", self._table(["服务器", "类型", "分类", "目标路径", "状态", "消息"], plex_rows)) if plex_rows else {"component": "div"},
                 self._section("失败项", self._table(["源文件", "错误"], error_rows)) if error_rows else {"component": "div"},
@@ -450,10 +468,24 @@ class P115MediaOrganizer(_PluginBase):
         self._notify_summary("执行完成", result_dict)
         return schemas.Response(success=result.failed == 0, message=f"执行完成：成功 {result.success}，失败 {result.failed}，跳过 {result.skipped}，清理空目录 {len(cleaned_dirs)}", data=result_dict)
 
-    def history(self):
+    def history(self, page: int = None, page_size: int = None, run_page: int = None, run_page_size: int = None):
+        history = list(reversed(self.get_data("history") or []))
+        runs = list(reversed(self.get_data("runs") or []))
+        history_items, history_meta = self._paginate(
+            history,
+            self._safe_int(page, self._history_page),
+            self._clamp_int(page_size, self._history_page_size, 1, 500),
+        )
+        run_items, run_meta = self._paginate(
+            runs,
+            self._safe_int(run_page, self._run_page),
+            self._clamp_int(run_page_size, self._run_page_size, 1, 200),
+        )
         return schemas.Response(success=True, data={
-            "runs": self.get_data("runs") or [],
-            "history": self.get_data("history") or [],
+            "runs": run_items,
+            "runs_pagination": run_meta,
+            "history": history_items,
+            "history_pagination": history_meta,
         })
 
     def clear_history(self):
@@ -889,6 +921,10 @@ class P115MediaOrganizer(_PluginBase):
             "target_cids": json.dumps(DEFAULT_TARGET_CIDS, ensure_ascii=False, indent=2),
             "history_limit": 1000,
             "run_limit": 100,
+            "history_page": 1,
+            "history_page_size": 50,
+            "run_page": 1,
+            "run_page_size": 10,
         }
 
     @staticmethod
@@ -909,6 +945,27 @@ class P115MediaOrganizer(_PluginBase):
             return int(value)
         except Exception:
             return default
+
+    @classmethod
+    def _clamp_int(cls, value: Any, default: int, minimum: int, maximum: int) -> int:
+        return max(minimum, min(maximum, cls._safe_int(value, default)))
+
+    @classmethod
+    def _paginate(cls, items: List[Any], page: int, page_size: int) -> Tuple[List[Any], Dict[str, int]]:
+        total = len(items)
+        page_size = cls._clamp_int(page_size, 50, 1, 500)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        page = max(1, min(cls._safe_int(page, 1), total_pages))
+        start_index = (page - 1) * page_size
+        end_index = min(total, start_index + page_size)
+        return items[start_index:end_index], {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+            "start": start_index + 1 if total else 0,
+            "end": end_index,
+        }
 
     @staticmethod
     def _safe_float(value: Any, default: float) -> float:

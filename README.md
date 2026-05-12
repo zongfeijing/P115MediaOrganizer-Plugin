@@ -109,6 +109,7 @@ The plugin details page shows:
 - latest dry-run plan
 - execution result and errors
 - recent run summaries and history details
+- paginated history display for large history sets
 - cleaned empty source directory count
 
 ## Safety Notes
