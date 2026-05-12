@@ -64,13 +64,18 @@ class Planner:
                         warnings.append("未配置未识别目录CID，已跳过")
                 status = "skipped" if action == "skip" else "planned"
 
-            target_dir_name = self._media_dir_name(title, year)
-            if media_type == "movie":
-                target_season_dir_name = None
-                target_name = self._movie_name(title, year, item.ext, item.name)
-            else:
-                target_season_dir_name = f"Season {season or 1:02d}"
-                target_name = self._tv_name(title, year, season, episode, item.ext, item.name, warnings)
+            target_dir_name, target_season_dir_name, target_name = self._build_target_names(
+                media_type=media_type,
+                mediainfo=mediainfo,
+                meta=meta,
+                title=title,
+                year=year,
+                season=season,
+                episode=episode,
+                ext=item.ext,
+                source_name=item.name,
+                warnings=warnings,
+            )
 
             target_path = str(PurePosixPath(target_category) / target_dir_name / (target_season_dir_name or "") / target_name)
             target_path = target_path.replace("//", "/")
@@ -173,7 +178,63 @@ class Planner:
     def _tv_name(title: str, year: Any, season: int, episode: int, ext: str, source_name: str, warnings: List[str]) -> str:
         suffix = ext or PurePosixPath(source_name).suffix
         if season and episode:
-            year_part = f" ({year})" if year else ""
-            return f"{title}{year_part} - S{season:02d}E{episode:02d}{suffix}"
+            return f"{title} - S{season:02d}E{episode:02d} - 第 {episode} 集{suffix}"
         warnings.append("未识别到明确季集，保留源文件名")
         return source_name
+
+    def _build_target_names(
+        self,
+        media_type: str,
+        mediainfo: Any,
+        meta: Any,
+        title: str,
+        year: Any,
+        season: int,
+        episode: int,
+        ext: str,
+        source_name: str,
+        warnings: List[str],
+    ):
+        rename_path = self._moviepilot_rename_path(media_type, mediainfo, meta, ext, source_name, warnings)
+        if rename_path:
+            parts = PurePosixPath(rename_path).parts
+            if media_type == "movie" and len(parts) >= 2:
+                return parts[-2], None, parts[-1]
+            if media_type == "tv" and len(parts) >= 3:
+                return parts[-3], parts[-2], parts[-1]
+
+        target_dir_name = self._media_dir_name(title, year)
+        if media_type == "movie":
+            return target_dir_name, None, self._movie_name(title, year, ext, source_name)
+        return target_dir_name, f"Season {season or 1}", self._tv_name(title, year, season, episode, ext, source_name, warnings)
+
+    @staticmethod
+    def _moviepilot_rename_path(media_type: str, mediainfo: Any, meta: Any, ext: str, source_name: str, warnings: List[str]) -> str:
+        if not mediainfo or not meta:
+            return ""
+        try:
+            file_extension = ext or PurePosixPath(source_name).suffix
+            if file_extension and not str(file_extension).startswith("."):
+                file_extension = f".{file_extension}"
+            from app.core.config import settings
+            from app.helper.message import TemplateHelper
+            from app.modules.filemanager.transhandler import TransHandler
+            from app.schemas.types import MediaType
+
+            mtype = MediaType.MOVIE if media_type == "movie" else MediaType.TV
+            rename_format = settings.RENAME_FORMAT(mtype)
+            rename_dict = TemplateHelper().builder.build(
+                meta=meta,
+                mediainfo=mediainfo,
+                file_extension=file_extension,
+            )
+            rename_path = TransHandler.get_rename_path(
+                template_string=rename_format,
+                rename_dict=rename_dict,
+                source_path=str(PurePosixPath(source_name)),
+            ).as_posix()
+            rename_path = re.sub(r"/+", "/", rename_path).strip("/")
+            return rename_path
+        except Exception as err:
+            warnings.append(f"MoviePilot命名模板渲染失败，使用内置命名：{err}")
+            return ""

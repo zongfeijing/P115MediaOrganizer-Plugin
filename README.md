@@ -64,6 +64,10 @@ The plugin resolves target folders as:
 
 For example, if MoviePilot classifies a TV item as `欧美剧`, the plugin resolves `/媒体库/TV/欧美剧` and moves the file there. Keep those category folder names aligned with MoviePilot's generated media library structure.
 
+### Naming
+
+The plugin uses MoviePilot's current movie/TV rename templates and rename event hook when building dry-run plans. If that path is unavailable, it falls back to MoviePilot's default style, for example `剧名 (年份)/Season 1/剧名 - S01E01 - 第 1 集.mkv`.
+
 ### Plex Refresh
 
 After a successful organize run, the plugin can refresh Plex through MoviePilot's configured media server services.
