@@ -64,6 +64,15 @@ The plugin resolves target folders as:
 
 For example, if MoviePilot classifies a TV item as `欧美剧`, the plugin resolves `/媒体库/TV/欧美剧` and moves the file there. Keep those category folder names aligned with MoviePilot's generated media library structure.
 
+### Plex Refresh
+
+After a successful organize run, the plugin can refresh Plex through MoviePilot's configured media server services.
+
+- `refresh_plex_after_execute`: enabled by default.
+- `plex_mediaservers`: optional Plex server name list. Leave empty to refresh every configured and connected Plex server.
+
+Refreshes are deduplicated by `media_type + target_category`, so one run refreshes each touched category directory once.
+
 ### Advanced Overrides
 
 - `target_cids`: optional advanced override. Leave category CID values empty when using path-based mapping.

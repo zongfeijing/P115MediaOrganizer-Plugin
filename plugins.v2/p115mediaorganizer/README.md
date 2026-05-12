@@ -10,6 +10,7 @@
 - 使用 MoviePilot 内部识别链路识别媒体信息与分类。
 - 默认按 MoviePilot 分类名移动到同名目标分类目录。
 - 支持 dry-run 先生成计划，再执行最近一次保存的计划。
+- 整理成功后可按本次涉及的分类目录刷新对应 Plex 媒体库。
 - 执行前校验 来源目录、目标目录等配置快照。
 
 ## 不做什么
@@ -64,6 +65,19 @@ curl -X POST \
 - `dry_run=true` 时只生成计划，除非额外传 `force_execute=true`。
 - `dry_run=false` 且 `execute=true` 时，会先生成最新计划，再执行移动。
 - `execute=false` 时只生成计划。
+
+## Plex 刷新
+
+默认启用 `refresh_plex_after_execute`。执行整理后，插件会收集本次成功移动的项目，按 `media_type + target_category` 去重，并调用 MoviePilot 已配置的 Plex 媒体服务器刷新对应分类目录，例如：
+
+```text
+/媒体库/Movie/华语电影
+/媒体库/TV/国产剧
+```
+
+- `plex_mediaservers` 留空时刷新全部已配置且可连接的 Plex 服务器。
+- 配置了 `plex_mediaservers` 时只刷新选中的 Plex 服务器。
+- 没有成功整理项目、Plex 不可用或未配置时，不影响 115 整理结果，只在日志与详情页记录刷新状态。
 
 ## 注意事项
 
