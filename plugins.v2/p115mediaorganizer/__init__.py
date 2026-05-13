@@ -2,6 +2,7 @@ import json
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from html import escape
 from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
@@ -59,7 +60,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "0.2.4"
+    plugin_version = "0.2.5"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -159,6 +160,7 @@ class P115MediaOrganizer(_PluginBase):
             {"path": "/trigger", "endpoint": self.trigger_api, "methods": ["POST"], "auth": "apikey", "summary": "外部触发整理"},
             {"path": "/execute_last_plan", "endpoint": self.execute_last_plan, "methods": ["POST"], "auth": "bear", "summary": "执行最近一次整理计划"},
             {"path": "/history", "endpoint": self.history, "methods": ["GET"], "auth": "bear", "summary": "查询整理历史"},
+            {"path": "/history_page", "endpoint": self.history_page, "methods": ["GET"], "auth": "bear", "summary": "分页查看整理历史"},
             {"path": "/clear_history", "endpoint": self.clear_history, "methods": ["POST"], "auth": "bear", "summary": "清空整理历史"},
             {"path": "/resolve_path", "endpoint": self.resolve_path_api, "methods": ["POST"], "auth": "bear", "summary": "解析115路径"},
             {"path": "/list_dir", "endpoint": self.list_dir_api, "methods": ["POST"], "auth": "bear", "summary": "列出115目录"},
@@ -214,13 +216,7 @@ class P115MediaOrganizer(_PluginBase):
                 self._row([
                     self._col(self._text("run_limit", "批次保留数量"), 4),
                 ]),
-                self._form_hint("历史分页：详情页只渲染当前页，翻页后保存配置再打开详情页"),
-                self._row([
-                    self._col(self._text("run_page", "批次页码"), 3),
-                    self._col(self._text("run_page_size", "批次每页"), 3),
-                    self._col(self._text("history_page", "明细页码"), 3),
-                    self._col(self._text("history_page_size", "明细每页"), 3),
-                ]),
+                self._form_hint("历史展示：详情页只展示最近摘要，完整历史请从详情页按钮打开"),
                 self._form_hint("115 连接"),
                 self._row([
                     self._col(self._text("cookie_path", "115 Cookie文件路径"), 12),
@@ -242,8 +238,8 @@ class P115MediaOrganizer(_PluginBase):
         last_result = self.get_data("last_result") or {}
         history = self.get_data("history") or []
         runs = self.get_data("runs") or []
-        run_page_items, run_page_meta = self._paginate(list(reversed(runs)), self._run_page, self._run_page_size)
-        history_page_items, history_page_meta = self._paginate(list(reversed(history)), self._history_page, self._history_page_size)
+        recent_runs = list(reversed(runs))[:5]
+        recent_history = list(reversed(history))[:5]
         p115 = self._p115_ops()
         status = "p115client可用" if p115.available else p115.import_error or "p115client不可用"
         plan_summary = self._count_by(last_plan, "status")
@@ -280,7 +276,7 @@ class P115MediaOrganizer(_PluginBase):
             item.get("skipped"),
             item.get("plex_refresh_count"),
             item.get("cleaned_empty_dirs"),
-        ] for item in run_page_items]
+        ] for item in recent_runs]
         history_rows = [[
             item.get("time"),
             item.get("run_id"),
@@ -290,7 +286,7 @@ class P115MediaOrganizer(_PluginBase):
             item.get("target_name"),
             item.get("status"),
             item.get("error"),
-        ] for item in history_page_items]
+        ] for item in recent_history]
         cleaned_dirs = last_result.get("cleaned_empty_dirs") or []
         return [{
             "component": "VContainer",
@@ -300,11 +296,11 @@ class P115MediaOrganizer(_PluginBase):
                 {"component": "VAlert", "props": {"type": "success", "variant": "tonal", "text": f"最近计划 {len(last_plan)} 条：planned {plan_summary.get('planned', 0)}，executed {plan_summary.get('executed', 0)}，failed {plan_summary.get('failed', 0)}，skipped {plan_summary.get('skipped', 0)}；展示前 {min(50, len(last_plan))} 条"}},
                 self._section("最近计划", self._table(["类型", "源文件", "目标分类", "目标路径", "状态", "警告"], plan_rows)),
                 {"component": "VAlert", "props": {"type": "warning" if last_result.get("failed", 0) else "success", "variant": "tonal", "text": f"最近执行：总计 {last_result.get('total', 0)}，成功 {last_result.get('success', 0)}，失败 {last_result.get('failed', 0)}，跳过 {last_result.get('skipped', 0)}，Plex刷新 {len(last_result.get('plex_refresh') or [])} 条，清理空目录 {len(cleaned_dirs)}；批次 {len(runs)} 个，历史 {len(history)} 条"}},
-                {"component": "VAlert", "props": {"type": "info", "variant": "tonal", "text": f"批次分页：第 {run_page_meta.get('page')} / {run_page_meta.get('total_pages')} 页，显示 {run_page_meta.get('start')} - {run_page_meta.get('end')} / {run_page_meta.get('total')}；明细分页：第 {history_page_meta.get('page')} / {history_page_meta.get('total_pages')} 页，显示 {history_page_meta.get('start')} - {history_page_meta.get('end')} / {history_page_meta.get('total')}"}},
-                self._section("最近批次", self._table(["时间", "Run ID", "来源", "总计", "成功", "失败", "跳过", "Plex刷新", "清理空目录"], run_rows)),
+                self._history_actions(),
+                self._section("最近批次（前5个）", self._table(["时间", "Run ID", "来源", "总计", "成功", "失败", "跳过", "Plex刷新", "清理空目录"], run_rows)),
                 self._section("Plex刷新", self._table(["服务器", "类型", "分类", "目标路径", "状态", "消息"], plex_rows)) if plex_rows else {"component": "div"},
                 self._section("失败项", self._table(["源文件", "错误"], error_rows)) if error_rows else {"component": "div"},
-                self._section("最近明细", self._table(["时间", "Run ID", "类型", "源文件", "目标分类", "目标名称", "状态", "错误"], history_rows)),
+                self._section("最近明细（前5条）", self._table(["时间", "Run ID", "类型", "源文件", "目标分类", "目标名称", "状态", "错误"], history_rows)),
             ],
         }]
 
@@ -487,6 +483,13 @@ class P115MediaOrganizer(_PluginBase):
             "history": history_items,
             "history_pagination": history_meta,
         })
+
+    def history_page(self, page: int = 1, page_size: int = 50, run_page: int = 1, run_page_size: int = 20):
+        history = list(reversed(self.get_data("history") or []))
+        runs = list(reversed(self.get_data("runs") or []))
+        history_items, history_meta = self._paginate(history, self._safe_int(page, 1), self._clamp_int(page_size, 50, 10, 200))
+        run_items, run_meta = self._paginate(runs, self._safe_int(run_page, 1), self._clamp_int(run_page_size, 20, 5, 100))
+        return self._html_response(self._history_page_html(history_items, history_meta, run_items, run_meta))
 
     def clear_history(self):
         self.save_data("history", [])
@@ -843,6 +846,28 @@ class P115MediaOrganizer(_PluginBase):
         if self._notify:
             self.post_message(mtype=NotificationType.Plugin, title=title, text=text)
 
+    @staticmethod
+    def _history_actions() -> Dict[str, Any]:
+        return {
+            "component": "VRow",
+            "props": {"class": "mb-2"},
+            "content": [{
+                "component": "VCol",
+                "props": {"cols": 12},
+                "content": [{
+                    "component": "VBtn",
+                    "props": {
+                        "href": "/api/v1/plugin/P115MediaOrganizer/history_page?page=1&page_size=50&run_page=1&run_page_size=20",
+                        "target": "_blank",
+                        "variant": "tonal",
+                        "color": "primary",
+                        "size": "small",
+                    },
+                    "text": "查看完整历史",
+                }],
+            }],
+        }
+
     def _append_run_summary(
         self,
         run_id: str,
@@ -878,6 +903,102 @@ class P115MediaOrganizer(_PluginBase):
             "sample_items": sample_items,
         })
         return runs[-max(1, self._run_limit):]
+
+    @staticmethod
+    def _html_response(html: str):
+        try:
+            from fastapi.responses import HTMLResponse
+            return HTMLResponse(content=html)
+        except Exception:
+            return html
+
+    def _history_page_html(
+        self,
+        history_items: List[Dict[str, Any]],
+        history_meta: Dict[str, int],
+        run_items: List[Dict[str, Any]],
+        run_meta: Dict[str, int],
+    ) -> str:
+        def link(label: str, h_page: int = None, r_page: int = None, disabled: bool = False) -> str:
+            if disabled:
+                return f'<span class="btn disabled">{escape(label)}</span>'
+            h_page = h_page or history_meta.get("page", 1)
+            r_page = r_page or run_meta.get("page", 1)
+            href = (
+                f"/api/v1/plugin/P115MediaOrganizer/history_page"
+                f"?page={h_page}&page_size={history_meta.get('page_size', 50)}"
+                f"&run_page={r_page}&run_page_size={run_meta.get('page_size', 20)}"
+            )
+            return f'<a class="btn" href="{href}">{escape(label)}</a>'
+
+        run_rows = "".join([
+            "<tr>"
+            f"<td>{escape(str(item.get('time') or ''))}</td>"
+            f"<td><code>{escape(str(item.get('run_id') or ''))}</code></td>"
+            f"<td>{escape(str(item.get('source') or 'manual'))}</td>"
+            f"<td>{escape(str(item.get('total') or 0))}</td>"
+            f"<td class='ok'>{escape(str(item.get('success') or 0))}</td>"
+            f"<td class='bad'>{escape(str(item.get('failed') or 0))}</td>"
+            f"<td>{escape(str(item.get('skipped') or 0))}</td>"
+            f"<td>{escape(str(item.get('plex_refresh_count') or 0))}</td>"
+            "</tr>"
+            for item in run_items
+        ]) or "<tr><td colspan='8' class='empty'>暂无批次</td></tr>"
+        history_rows = "".join([
+            "<tr>"
+            f"<td>{escape(str(item.get('time') or ''))}</td>"
+            f"<td><code>{escape(str(item.get('run_id') or ''))}</code></td>"
+            f"<td>{escape(str(item.get('media_type') or ''))}</td>"
+            f"<td title='{escape(str(item.get('source_name') or ''))}'>{escape(str(item.get('source_name') or ''))}</td>"
+            f"<td>{escape(str(item.get('target_category') or ''))}</td>"
+            f"<td title='{escape(str(item.get('target_name') or ''))}'>{escape(str(item.get('target_name') or ''))}</td>"
+            f"<td>{escape(str(item.get('status') or ''))}</td>"
+            f"<td class='bad'>{escape(str(item.get('error') or ''))}</td>"
+            "</tr>"
+            for item in history_items
+        ]) or "<tr><td colspan='8' class='empty'>暂无明细</td></tr>"
+        return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>115云端媒体整理历史</title>
+  <style>
+    body {{ margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f6f7f9; color: #1f2937; }}
+    h1 {{ font-size: 22px; margin: 0 0 18px; }}
+    h2 {{ font-size: 16px; margin: 26px 0 10px; }}
+    .summary {{ color: #4b5563; margin-bottom: 16px; }}
+    .toolbar {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 14px; }}
+    .btn {{ display: inline-block; padding: 6px 10px; border-radius: 6px; background: #fff; color: #2563eb; text-decoration: none; border: 1px solid #d1d5db; font-size: 13px; }}
+    .btn.disabled {{ color: #9ca3af; background: #f3f4f6; }}
+    table {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e5e7eb; table-layout: fixed; }}
+    th, td {{ padding: 9px 10px; border-bottom: 1px solid #eef0f3; text-align: left; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    th {{ background: #f9fafb; color: #374151; font-weight: 600; }}
+    code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }}
+    .ok {{ color: #047857; }} .bad {{ color: #b91c1c; }} .empty {{ color: #6b7280; text-align: center; }}
+  </style>
+</head>
+<body>
+  <h1>115云端媒体整理历史</h1>
+  <div class="summary">批次 {run_meta.get('total')} 个，明细 {history_meta.get('total')} 条。接口已分页渲染，不会一次加载全部历史。</div>
+
+  <h2>执行批次</h2>
+  <div class="toolbar">
+    <span>第 {run_meta.get('page')} / {run_meta.get('total_pages')} 页，显示 {run_meta.get('start')} - {run_meta.get('end')}</span>
+    {link('上一页', r_page=max(1, run_meta.get('page', 1) - 1), disabled=run_meta.get('page', 1) <= 1)}
+    {link('下一页', r_page=min(run_meta.get('total_pages', 1), run_meta.get('page', 1) + 1), disabled=run_meta.get('page', 1) >= run_meta.get('total_pages', 1))}
+  </div>
+  <table><thead><tr><th>时间</th><th>Run ID</th><th>来源</th><th>总计</th><th>成功</th><th>失败</th><th>跳过</th><th>Plex刷新</th></tr></thead><tbody>{run_rows}</tbody></table>
+
+  <h2>历史明细</h2>
+  <div class="toolbar">
+    <span>第 {history_meta.get('page')} / {history_meta.get('total_pages')} 页，显示 {history_meta.get('start')} - {history_meta.get('end')}</span>
+    {link('上一页', h_page=max(1, history_meta.get('page', 1) - 1), disabled=history_meta.get('page', 1) <= 1)}
+    {link('下一页', h_page=min(history_meta.get('total_pages', 1), history_meta.get('page', 1) + 1), disabled=history_meta.get('page', 1) >= history_meta.get('total_pages', 1))}
+  </div>
+  <table><thead><tr><th>时间</th><th>Run ID</th><th>类型</th><th>源文件</th><th>分类</th><th>目标名称</th><th>状态</th><th>错误</th></tr></thead><tbody>{history_rows}</tbody></table>
+</body>
+</html>"""
 
     @staticmethod
     def _history_record(item: Dict[str, Any], status: str, error: str, run_id: str = "") -> Dict[str, Any]:
