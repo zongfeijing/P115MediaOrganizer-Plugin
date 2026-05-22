@@ -1,5 +1,6 @@
 import json
 import time
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 from html import escape
@@ -178,59 +179,69 @@ class P115MediaOrganizer(_PluginBase):
         }]
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
+        base_content = [
+            self._row([
+                self._col(self._switch("enabled", "启用插件"), 3),
+                self._col(self._switch("notify", "发送通知"), 3),
+                self._col(self._switch("onlyonce", "立即运行一次"), 3),
+                self._col(self._switch("dry_run", "仅生成计划"), 3),
+            ]),
+            self._row([
+                self._col(self._text("cron", "CRON表达式"), 12),
+            ]),
+        ]
+        exec_content = [
+            self._row([
+                self._col(self._switch("delete_empty_source_dirs", "删除空源目录"), 4),
+                self._col(self._switch("refresh_plex_after_execute", "整理后刷新Plex"), 4),
+            ]),
+            self._row([
+                self._col(self._mediaserver_select("plex_mediaservers", "Plex媒体服务器"), 12),
+            ]),
+            self._row([
+                self._col(self._select("conflict_strategy", "重名策略", [{"title": "跳过", "value": "skip"}, {"title": "自动后缀", "value": "rename_with_suffix"}]), 4),
+                self._col(self._select("unrecognized_action", "未识别处理", [{"title": "跳过", "value": "skip"}, {"title": "移动到未识别", "value": "move_to_unrecognized"}]), 4),
+            ]),
+            self._row([
+                self._col(self._text("max_depth", "最大扫描深度"), 4),
+                self._col(self._text("max_items_per_run", "单次最多处理"), 4),
+                self._col(self._text("min_file_size_mb", "最小文件大小MB"), 4),
+            ]),
+            self._row([
+                self._col(self._text("batch_size", "批大小"), 4),
+                self._col(self._text("sleep_between_batches", "批间隔秒"), 4),
+                self._col(self._text("history_limit", "历史保留条数"), 4),
+            ]),
+            self._row([
+                self._col(self._text("run_limit", "批次保留数量"), 4),
+            ]),
+        ]
+        cookie_content = [
+            self._row([
+                self._col(self._text("cookie_path", "115 Cookie文件路径"), 12),
+            ]),
+            self._row([
+                self._col(self._textarea("cookie_text", "115 Cookie文本（文件不可用时兜底）", rows=3), 12),
+            ]),
+        ]
+        dir_content = [
+            self._form_hint("填写115路径即可；target_root_path 下的分类目录需与 MoviePilot 分类一致"),
+            self._row([self._col(self._textarea("source_mappings", "来源与目标路径映射JSON", rows=8), 12)]),
+            self._row([self._col(self._textarea("target_cids", "目标CID JSON（高级覆盖；路径模式通常保持默认）", rows=8), 12)]),
+        ]
+        advanced_content = [
+            self._row([self._col(self._textarea("exclude_keywords", "排除关键词，逗号分隔", rows=2), 12)]),
+            self._row([self._col(self._textarea("category_mapping", "分类别名映射JSON（可选）", rows=5), 12)]),
+        ]
         return [{
             "component": "VForm",
-            "content": [
-                self._form_hint("基础设置"),
-                self._row([
-                    self._col(self._switch("enabled", "启用插件"), 3),
-                    self._col(self._switch("notify", "发送通知"), 3),
-                    self._col(self._switch("onlyonce", "立即运行一次"), 3),
-                    self._col(self._switch("dry_run", "仅生成计划"), 3),
-                ]),
-                self._row([
-                    self._col(self._text("cron", "CRON表达式"), 12),
-                ]),
-                self._form_hint("执行策略"),
-                self._row([
-                    self._col(self._switch("delete_empty_source_dirs", "删除空源目录"), 4),
-                    self._col(self._switch("refresh_plex_after_execute", "整理后刷新Plex"), 4),
-                ]),
-                self._row([
-                    self._col(self._mediaserver_select("plex_mediaservers", "Plex媒体服务器"), 12),
-                ]),
-                self._row([
-                    self._col(self._select("conflict_strategy", "重名策略", [{"title": "跳过", "value": "skip"}, {"title": "自动后缀", "value": "rename_with_suffix"}]), 4),
-                    self._col(self._select("unrecognized_action", "未识别处理", [{"title": "跳过", "value": "skip"}, {"title": "移动到未识别", "value": "move_to_unrecognized"}]), 4),
-                ]),
-                self._row([
-                    self._col(self._text("max_depth", "最大扫描深度"), 4),
-                    self._col(self._text("max_items_per_run", "单次最多处理"), 4),
-                    self._col(self._text("min_file_size_mb", "最小文件大小MB"), 4),
-                ]),
-                self._row([
-                    self._col(self._text("batch_size", "批大小"), 4),
-                    self._col(self._text("sleep_between_batches", "批间隔秒"), 4),
-                    self._col(self._text("history_limit", "历史保留条数"), 4),
-                ]),
-                self._row([
-                    self._col(self._text("run_limit", "批次保留数量"), 4),
-                ]),
-                self._form_hint("历史展示：详情页只展示最近摘要，完整历史请从详情页按钮打开"),
-                self._form_hint("115 连接"),
-                self._row([
-                    self._col(self._text("cookie_path", "115 Cookie文件路径"), 12),
-                ]),
-                self._row([
-                    self._col(self._textarea("cookie_text", "115 Cookie文本（文件不可用时兜底）", rows=3), 12),
-                ]),
-                self._form_hint("目录配置：填写115路径即可；target_root_path 下的分类目录需与 MoviePilot 分类一致"),
-                self._row([self._col(self._textarea("source_mappings", "来源与目标路径映射JSON", rows=8), 12)]),
-                self._row([self._col(self._textarea("target_cids", "目标CID JSON（高级覆盖；路径模式通常保持默认）", rows=8), 12)]),
-                self._form_hint("高级选项"),
-                self._row([self._col(self._textarea("exclude_keywords", "排除关键词，逗号分隔", rows=2), 12)]),
-                self._row([self._col(self._textarea("category_mapping", "分类别名映射JSON（可选）", rows=5), 12)]),
-            ],
+            "content": self._tabs_window([
+                ("base", "基础", base_content),
+                ("exec", "执行", exec_content),
+                ("cookie", "115 连接", cookie_content),
+                ("dir", "目录", dir_content),
+                ("advanced", "高级", advanced_content),
+            ], model="_form_tab"),
         }], self._default_config()
 
     def get_page(self) -> List[dict]:
@@ -238,26 +249,100 @@ class P115MediaOrganizer(_PluginBase):
         last_result = self.get_data("last_result") or {}
         history = self.get_data("history") or []
         runs = self.get_data("runs") or []
-        recent_runs = list(reversed(runs))[:5]
-        recent_history = list(reversed(history))[:5]
         p115 = self._p115_ops()
-        status = "p115client可用" if p115.available else p115.import_error or "p115client不可用"
+        p115_ok = bool(p115.available)
+        p115_status = "可用" if p115_ok else (p115.import_error or "不可用")
+
+        sources = self._source_mapping_list()
+        last_run_time = ""
+        if runs:
+            latest = runs[-1]
+            last_run_time = latest.get("finished_at") or latest.get("time") or ""
+
         plan_summary = self._count_by(last_plan, "status")
-        plan_rows = [[
-            item.get("media_type"),
-            item.get("source_name"),
-            item.get("target_category"),
-            item.get("target_path"),
-            item.get("status"),
-            "；".join(item.get("warnings") or []),
-        ] for item in last_plan[:50]]
-        mapping_rows = [[
-            item.get("name"),
-            item.get("media_type"),
-            item.get("source_path"),
-            item.get("target_root_path"),
-        ] for item in self._source_mapping_list()]
-        error_rows = [[item.get("source"), item.get("error")] for item in (last_result.get("errors") or [])[:20]]
+        total = last_result.get("total", 0)
+        success = last_result.get("success", 0)
+        failed = last_result.get("failed", 0)
+        skipped = last_result.get("skipped", 0)
+        plex_count = len(last_result.get("plex_refresh") or [])
+        cleaned_count = len(last_result.get("cleaned_empty_dirs") or [])
+
+        # 计划 Tab
+        plan_chips_row = {
+            "component": "div",
+            "props": {"class": "mb-3 d-flex flex-wrap"},
+            "content": [
+                self._count_chip("待执行", plan_summary.get("planned", 0), "info"),
+                self._count_chip("已执行", plan_summary.get("executed", 0), "success"),
+                self._count_chip("失败", plan_summary.get("failed", 0), "error"),
+                self._count_chip("跳过", plan_summary.get("skipped", 0), "warning"),
+                self._count_chip("共", len(last_plan), "secondary"),
+            ],
+        }
+        plan_headers = [
+            {"title": "类型", "key": "media_type", "sortable": True},
+            {"title": "源文件", "key": "source_name", "sortable": True},
+            {"title": "目标分类", "key": "target_category", "sortable": True},
+            {"title": "目标路径", "key": "target_path", "sortable": False},
+            {"title": "状态", "key": "status", "sortable": True},
+            {"title": "警告", "key": "warnings_text", "sortable": False},
+        ]
+        plan_items = [{
+            "media_type": item.get("media_type") or "",
+            "source_name": item.get("source_name") or "",
+            "target_category": item.get("target_category") or "",
+            "target_path": item.get("target_path") or "",
+            "status": item.get("status") or "",
+            "warnings_text": "；".join(item.get("warnings") or []),
+        } for item in last_plan]
+
+        # 批次 Tab
+        run_headers = [
+            {"title": "时间", "key": "time", "sortable": True},
+            {"title": "Run ID", "key": "run_id", "sortable": False},
+            {"title": "来源", "key": "source", "sortable": True},
+            {"title": "总计", "key": "total", "sortable": True},
+            {"title": "成功", "key": "success", "sortable": True},
+            {"title": "失败", "key": "failed", "sortable": True},
+            {"title": "跳过", "key": "skipped", "sortable": True},
+            {"title": "Plex刷新", "key": "plex_refresh_count", "sortable": True},
+            {"title": "清理空目录", "key": "cleaned_empty_dirs", "sortable": True},
+        ]
+        run_items_view = [{
+            "time": item.get("time") or "",
+            "run_id": item.get("run_id") or "",
+            "source": item.get("source") or "manual",
+            "total": item.get("total") or 0,
+            "success": item.get("success") or 0,
+            "failed": item.get("failed") or 0,
+            "skipped": item.get("skipped") or 0,
+            "plex_refresh_count": item.get("plex_refresh_count") or 0,
+            "cleaned_empty_dirs": item.get("cleaned_empty_dirs") or 0,
+        } for item in list(reversed(runs))[:50]]
+
+        # 明细 Tab
+        history_headers = [
+            {"title": "时间", "key": "time", "sortable": True},
+            {"title": "Run ID", "key": "run_id", "sortable": False},
+            {"title": "类型", "key": "media_type", "sortable": True},
+            {"title": "源文件", "key": "source_name", "sortable": True},
+            {"title": "目标分类", "key": "target_category", "sortable": True},
+            {"title": "目标名称", "key": "target_name", "sortable": True},
+            {"title": "状态", "key": "status", "sortable": True},
+            {"title": "错误", "key": "error", "sortable": False},
+        ]
+        history_items_view = [{
+            "time": item.get("time") or "",
+            "run_id": item.get("run_id") or "",
+            "media_type": item.get("media_type") or "",
+            "source_name": item.get("source_name") or "",
+            "target_category": item.get("target_category") or "",
+            "target_name": item.get("target_name") or "",
+            "status": item.get("status") or "",
+            "error": item.get("error") or "",
+        } for item in list(reversed(history))[:50]]
+
+        # Plex Tab
         plex_rows = [[
             item.get("server"),
             item.get("media_type"),
@@ -265,42 +350,107 @@ class P115MediaOrganizer(_PluginBase):
             item.get("target_path"),
             "成功" if item.get("success") else "失败",
             item.get("message"),
-        ] for item in (last_result.get("plex_refresh") or [])[:50]]
-        run_rows = [[
-            item.get("time"),
-            item.get("run_id"),
-            item.get("source") or "manual",
-            item.get("total"),
-            item.get("success"),
-            item.get("failed"),
-            item.get("skipped"),
-            item.get("plex_refresh_count"),
-            item.get("cleaned_empty_dirs"),
-        ] for item in recent_runs]
-        history_rows = [[
-            item.get("time"),
-            item.get("run_id"),
+        ] for item in (last_result.get("plex_refresh") or [])]
+        plex_table = self._table(["服务器", "类型", "分类", "目标路径", "状态", "消息"], plex_rows)
+
+        # 错误 Tab
+        error_rows = [[item.get("source"), item.get("error")]
+                      for item in (last_result.get("errors") or [])]
+        errors_table = self._table(["源文件", "错误"], error_rows)
+
+        # 配置 Tab
+        mapping_rows = [[
+            item.get("name"),
             item.get("media_type"),
-            item.get("source_name"),
-            item.get("target_category"),
-            item.get("target_name"),
-            item.get("status"),
-            item.get("error"),
-        ] for item in recent_history]
-        cleaned_dirs = last_result.get("cleaned_empty_dirs") or []
+            item.get("source_path"),
+            item.get("target_root_path"),
+        ] for item in sources]
+        config_summary = (
+            f"dry_run：{self._dry_run} ｜ 重名策略：{self._conflict_strategy} ｜ "
+            f"刷新 Plex：{self._refresh_plex_after_execute} ｜ "
+            f"清理空源目录：{self._delete_empty_source_dirs} ｜ "
+            f"最大扫描深度：{self._max_depth} ｜ 单次最多：{self._max_items_per_run} ｜ "
+            f"最小文件：{self._min_file_size_mb} MB ｜ 批大小：{self._batch_size}"
+        )
+
+        metrics = [
+            {"label": "总计", "value": total, "color": "primary"},
+            {"label": "成功", "value": success, "color": "success"},
+            {"label": "失败", "value": failed, "color": "error"},
+            {"label": "跳过", "value": skipped, "color": "warning"},
+            {"label": "Plex刷新", "value": plex_count, "color": "info"},
+            {"label": "清理空目录", "value": cleaned_count, "color": "secondary"},
+        ]
+
+        header = {
+            "component": "div",
+            "props": {"class": "d-flex align-center flex-wrap mb-3"},
+            "content": [
+                {"component": "h2", "props": {"class": "text-h6 ma-0"}, "text": "115云端媒体整理"},
+                {"component": "VSpacer"},
+                self._action_button("重新生成计划", "dry_run_all", "post", "primary", "mdi-refresh"),
+                self._action_button("执行计划", "execute_last_plan", "post", "error", "mdi-play",
+                                    variant="outlined"),
+            ],
+        }
+
+        runs_truncated_hint = {
+            "component": "div",
+            "props": {"class": "text-caption text-medium-emphasis mb-2"},
+            "text": f"共 {len(runs)} 个批次，显示最近 {min(50, len(runs))} 个。完整批次请用 /api/v1/plugin/P115MediaOrganizer/history_page?apikey=... 查询。",
+        }
+        history_truncated_hint = {
+            "component": "div",
+            "props": {"class": "text-caption text-medium-emphasis mb-2"},
+            "text": f"共 {len(history)} 条明细，显示最近 {min(50, len(history))} 条。完整明细同上接口可查。",
+        }
+
+        panel_items = [
+            ("history", f"整理明细（共 {len(history)}，显示最近 {min(50, len(history))}）", [
+                history_truncated_hint,
+                self._data_table(history_headers, history_items_view, empty_text="暂无历史明细"),
+            ]),
+            ("plan", "整理计划", [
+                plan_chips_row,
+                self._data_table(plan_headers, plan_items, empty_text="暂无整理计划"),
+            ]),
+            ("runs", f"执行批次（共 {len(runs)}，显示最近 {min(50, len(runs))}）", [
+                runs_truncated_hint,
+                self._data_table(run_headers, run_items_view, empty_text="暂无执行批次"),
+            ]),
+        ]
+        if plex_rows:
+            panel_items.append(("plex", "Plex 刷新", [plex_table]))
+        if error_rows:
+            panel_items.append(("errors", "失败项", [errors_table]))
+        panel_items.append(("config", "配置概览", [
+            self._table(["名称", "类型", "来源路径", "目标根路径"], mapping_rows),
+            {"component": "div", "props": {"class": "text-caption mt-3"}, "text": config_summary},
+        ]))
+
+        panels = {
+            "component": "VExpansionPanels",
+            "props": {"multiple": True, "model-value": ["history"], "variant": "accordion", "class": "mb-3"},
+            "content": [
+                {
+                    "component": "VExpansionPanel",
+                    "props": {"value": value},
+                    "content": [
+                        {"component": "VExpansionPanelTitle", "text": title},
+                        {"component": "VExpansionPanelText", "content": body},
+                    ],
+                }
+                for value, title, body in panel_items
+            ],
+        }
+
         return [{
             "component": "VContainer",
             "content": [
-                {"component": "VAlert", "props": {"type": "info", "variant": "tonal", "text": f"{status}；dry_run：{self._dry_run}"}},
-                self._section("来源映射", self._table(["名称", "类型", "来源路径", "目标根路径"], mapping_rows)),
-                {"component": "VAlert", "props": {"type": "success", "variant": "tonal", "text": f"最近计划 {len(last_plan)} 条：planned {plan_summary.get('planned', 0)}，executed {plan_summary.get('executed', 0)}，failed {plan_summary.get('failed', 0)}，skipped {plan_summary.get('skipped', 0)}；展示前 {min(50, len(last_plan))} 条"}},
-                self._section("最近计划", self._table(["类型", "源文件", "目标分类", "目标路径", "状态", "警告"], plan_rows)),
-                {"component": "VAlert", "props": {"type": "warning" if last_result.get("failed", 0) else "success", "variant": "tonal", "text": f"最近执行：总计 {last_result.get('total', 0)}，成功 {last_result.get('success', 0)}，失败 {last_result.get('failed', 0)}，跳过 {last_result.get('skipped', 0)}，Plex刷新 {len(last_result.get('plex_refresh') or [])} 条，清理空目录 {len(cleaned_dirs)}；批次 {len(runs)} 个，历史 {len(history)} 条"}},
-                self._history_actions(),
-                self._section("最近批次（前5个）", self._table(["时间", "Run ID", "来源", "总计", "成功", "失败", "跳过", "Plex刷新", "清理空目录"], run_rows)),
-                self._section("Plex刷新", self._table(["服务器", "类型", "分类", "目标路径", "状态", "消息"], plex_rows)) if plex_rows else {"component": "div"},
-                self._section("失败项", self._table(["源文件", "错误"], error_rows)) if error_rows else {"component": "div"},
-                self._section("最近明细（前5条）", self._table(["时间", "Run ID", "类型", "源文件", "目标分类", "目标名称", "状态", "错误"], history_rows)),
+                header,
+                self._status_strip(p115_status, p115_ok, self._dry_run, len(sources), last_run_time),
+                self._metric_row(metrics),
+                panels,
             ],
         }]
 
@@ -597,7 +747,7 @@ class P115MediaOrganizer(_PluginBase):
             logger.info(f"【115云端媒体整理】来源计划生成完成：{source_path}，计划 {len(plan)} 条")
             return schemas.Response(success=True, message=f"已生成{media_type}整理计划：{len(plan)} 条", data=plan)
         except Exception as err:
-            logger.exception(f"生成115整理计划失败：{err}")
+            logger.error(f"生成115整理计划失败：{err}\n{traceback.format_exc()}")
             return schemas.Response(success=False, message=str(err))
 
     def _execute_guard(self):
@@ -845,28 +995,6 @@ class P115MediaOrganizer(_PluginBase):
     def _notify_text(self, title: str, text: str):
         if self._notify:
             self.post_message(mtype=NotificationType.Plugin, title=title, text=text)
-
-    @staticmethod
-    def _history_actions() -> Dict[str, Any]:
-        return {
-            "component": "VRow",
-            "props": {"class": "mb-2"},
-            "content": [{
-                "component": "VCol",
-                "props": {"cols": 12},
-                "content": [{
-                    "component": "VBtn",
-                    "props": {
-                        "href": "/api/v1/plugin/P115MediaOrganizer/history_page?page=1&page_size=50&run_page=1&run_page_size=20",
-                        "target": "_blank",
-                        "variant": "tonal",
-                        "color": "primary",
-                        "size": "small",
-                    },
-                    "text": "查看完整历史",
-                }],
-            }],
-        }
 
     def _append_run_summary(
         self,
@@ -1190,3 +1318,133 @@ class P115MediaOrganizer(_PluginBase):
         for row in rows:
             content.append({"component": "tr", "content": [{"component": "td", "text": str(cell or "")} for cell in row]})
         return content
+
+    @staticmethod
+    def _metric_card(label: str, value: Any, color: str = "primary") -> Dict[str, Any]:
+        return {
+            "component": "VCol",
+            "props": {"cols": 6, "sm": 4, "md": 2},
+            "content": [{
+                "component": "VCard",
+                "props": {"variant": "tonal", "color": color, "class": "pa-3 text-center"},
+                "content": [
+                    {"component": "div", "props": {"class": "text-h4 font-weight-bold"}, "text": str(value)},
+                    {"component": "div", "props": {"class": "text-caption mt-1"}, "text": label},
+                ],
+            }],
+        }
+
+    @staticmethod
+    def _metric_row(metrics: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return {
+            "component": "VRow",
+            "props": {"class": "mb-3"},
+            "content": [
+                P115MediaOrganizer._metric_card(m["label"], m["value"], m.get("color", "primary"))
+                for m in metrics
+            ],
+        }
+
+    @staticmethod
+    def _status_chip(status: str) -> Dict[str, Any]:
+        color_map = {
+            "executed": ("success", "已执行"),
+            "success": ("success", "成功"),
+            "failed": ("error", "失败"),
+            "skipped": ("warning", "跳过"),
+            "planned": ("info", "待执行"),
+        }
+        color, text = color_map.get(str(status or "").lower(), ("default", str(status or "-")))
+        return {
+            "component": "VChip",
+            "props": {"color": color, "size": "small", "variant": "tonal", "class": "mr-2 mb-2"},
+            "text": text,
+        }
+
+    @staticmethod
+    def _count_chip(label: str, count: int, color: str) -> Dict[str, Any]:
+        return {
+            "component": "VChip",
+            "props": {"color": color, "size": "small", "variant": "tonal", "class": "mr-2 mb-2"},
+            "text": f"{label} {count}",
+        }
+
+    @staticmethod
+    def _action_button(text: str, api_path: str, method: str = "post",
+                       color: str = "primary", icon: str = "",
+                       variant: str = "tonal") -> Dict[str, Any]:
+        # No API token in URL; rely on MoviePilot's frontend to attach the logged-in user's session.
+        api_url = f"plugin/P115MediaOrganizer/{api_path}"
+        props = {"color": color, "variant": variant, "size": "small", "class": "ml-2"}
+        if icon:
+            props["prepend-icon"] = icon
+        return {
+            "component": "VBtn",
+            "props": props,
+            "text": text,
+            "events": {"click": {"api": api_url, "method": method, "params": {}}},
+        }
+
+    @staticmethod
+    def _tabs_window(tabs: List[Tuple[str, str, List[Dict[str, Any]]]], model: str = "_page_tab") -> List[Dict[str, Any]]:
+        return [
+            {
+                "component": "VTabs",
+                "props": {"model": model, "color": "primary", "grow": True},
+                "content": [
+                    {"component": "VTab", "props": {"value": value}, "text": label}
+                    for value, label, _ in tabs
+                ],
+            },
+            {
+                "component": "VWindow",
+                "props": {"model": model, "class": "mt-3"},
+                "content": [
+                    {
+                        "component": "VWindowItem",
+                        "props": {"value": value},
+                        "content": content,
+                    }
+                    for value, _, content in tabs
+                ],
+            },
+        ]
+
+    @staticmethod
+    def _data_table(headers: List[Dict[str, Any]], items: List[Dict[str, Any]],
+                    height: str = "", empty_text: str = "暂无数据") -> Dict[str, Any]:
+        if not items:
+            return {"component": "VAlert", "props": {"type": "info", "variant": "tonal", "text": empty_text}}
+        props = {
+            "headers": headers,
+            "items": items,
+            "density": "compact",
+            "hide-no-data": True,
+            "hover": True,
+            "class": "text-sm",
+        }
+        if height:
+            props["height"] = height
+            props["fixed-header"] = True
+        return {"component": "VDataTableVirtual", "props": props}
+
+    @staticmethod
+    def _status_strip(p115_status: str, p115_ok: bool, dry_run: bool,
+                      source_count: int, last_run_time: str) -> Dict[str, Any]:
+        parts = [
+            f"p115client：{p115_status}",
+            f"dry_run：{'是' if dry_run else '否'}",
+            f"来源映射：{source_count} 个",
+        ]
+        if last_run_time:
+            parts.append(f"上次执行：{last_run_time}")
+        return {
+            "component": "VAlert",
+            "props": {
+                "type": "success" if p115_ok else "warning",
+                "variant": "tonal",
+                "density": "compact",
+                "class": "mb-3",
+                "text": "  ·  ".join(parts),
+            },
+        }
