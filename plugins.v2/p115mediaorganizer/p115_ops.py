@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import time
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any, Dict, Iterable, List, Optional
+
+from app.log import logger
 
 from .models import MediaItem
 
@@ -17,6 +21,8 @@ class P115UnavailableError(RuntimeError):
 
 
 class P115Ops:
+    _install_attempted = False
+
     def __init__(self, cookie_path: str = "", cookie_text: str = ""):
         self.cookie_path = cookie_path
         self.cookie_text = cookie_text
@@ -30,10 +36,8 @@ class P115Ops:
         return self.client is not None and not self.import_error
 
     def _init_client(self):
-        try:
-            from p115client import P115Client
-        except Exception as err:
-            self.import_error = f"p115client导入失败：{err}"
+        P115Client = self._load_p115_client()
+        if not P115Client:
             return
 
         try:
@@ -52,6 +56,45 @@ class P115Ops:
                 self.import_error = f"p115client初始化失败：{err}"
         except Exception as err:
             self.import_error = f"p115client初始化失败：{err}"
+
+    def _load_p115_client(self):
+        try:
+            from p115client import P115Client
+            return P115Client
+        except ImportError as err:
+            if self.__class__._install_attempted:
+                self.import_error = f"p115client导入失败：{err}"
+                return None
+            self.__class__._install_attempted = True
+            install_result = self._install_p115client()
+            if not install_result.get("success"):
+                self.import_error = install_result.get("message") or f"p115client导入失败：{err}"
+                return None
+            try:
+                from p115client import P115Client
+                return P115Client
+            except Exception as retry_err:
+                self.import_error = f"p115client自动安装后仍导入失败：{retry_err}"
+                return None
+        except Exception as err:
+            self.import_error = f"p115client导入失败：{err}"
+            return None
+
+    @staticmethod
+    def _install_p115client() -> Dict[str, Any]:
+        cmd = [sys.executable, "-m", "pip", "install", "p115client"]
+        logger.info("【115云端媒体整理】检测到 p115client 缺失，开始自动安装")
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        except Exception as err:
+            logger.warning(f"【115云端媒体整理】p115client 自动安装异常：{err}")
+            return {"success": False, "message": f"p115client自动安装异常：{err}"}
+        output = "\n".join([result.stdout or "", result.stderr or ""]).strip()[-1000:]
+        if result.returncode != 0:
+            logger.warning(f"【115云端媒体整理】p115client 自动安装失败：{output}")
+            return {"success": False, "message": f"p115client自动安装失败：{output}"}
+        logger.info("【115云端媒体整理】p115client 自动安装完成")
+        return {"success": True, "message": output}
 
     def resolve_path(self, path: str) -> str:
         if path in ("", "/"):

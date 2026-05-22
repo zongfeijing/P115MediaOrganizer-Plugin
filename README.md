@@ -22,7 +22,7 @@ plugins.v2/p115mediaorganizer
 
 ### 115 Connection
 
-The plugin uses `p115client`, so it needs a 115 web cookie.
+The plugin uses `p115client`, so it needs a 115 web cookie. If the dependency disappears after a MoviePilot/container update, the plugin will automatically run `python -m pip install p115client` on first 115 connection attempt and retry the import.
 
 Cookie options:
 
