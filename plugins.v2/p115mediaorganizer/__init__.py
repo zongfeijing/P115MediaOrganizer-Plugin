@@ -61,7 +61,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "0.3.0"
+    plugin_version = "0.3.1"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -1412,21 +1412,37 @@ class P115MediaOrganizer(_PluginBase):
 
     @staticmethod
     def _data_table(headers: List[Dict[str, Any]], items: List[Dict[str, Any]],
-                    height: str = "", empty_text: str = "暂无数据") -> Dict[str, Any]:
+                    height: str = "24rem", empty_text: str = "暂无数据") -> Dict[str, Any]:
         if not items:
             return {"component": "VAlert", "props": {"type": "info", "variant": "tonal", "text": empty_text}}
-        props = {
-            "headers": headers,
-            "items": items,
-            "density": "compact",
-            "hide-no-data": True,
-            "hover": True,
-            "class": "text-sm",
+        # short lists shouldn't waste vertical space; compute a content-fit height capped at `height`
+        # rough estimate: header ~48px + each compact row ~40px
+        estimated_px = 48 + len(items) * 40 + 16
+        cap_px_match = 0
+        if height.endswith("rem"):
+            try:
+                cap_px_match = int(float(height[:-3]) * 16)
+            except ValueError:
+                pass
+        elif height.endswith("px"):
+            try:
+                cap_px_match = int(float(height[:-2]))
+            except ValueError:
+                pass
+        effective_height = f"{min(estimated_px, cap_px_match)}px" if cap_px_match else height
+        return {
+            "component": "VDataTableVirtual",
+            "props": {
+                "headers": headers,
+                "items": items,
+                "height": effective_height,
+                "density": "compact",
+                "fixed-header": True,
+                "hide-no-data": True,
+                "hover": True,
+                "class": "text-sm",
+            },
         }
-        if height:
-            props["height"] = height
-            props["fixed-header"] = True
-        return {"component": "VDataTableVirtual", "props": props}
 
     @staticmethod
     def _status_strip(p115_status: str, p115_ok: bool, dry_run: bool,
