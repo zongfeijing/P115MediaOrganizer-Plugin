@@ -979,6 +979,7 @@ class P115MediaOrganizer(_PluginBase):
         if renames:
             try:
                 for chunk in self._chunks_dict(renames, BATCH_RENAME_MAX):
+                    logger.info(f"【115云端媒体整理】batch_rename({len(chunk)})")
                     p115.batch_rename(chunk)
             except P115UnavailableError as err:
                 logger.warning(f"【115云端媒体整理】batch_rename 失败，逐条 fallback：{err}")
@@ -1000,6 +1001,7 @@ class P115MediaOrganizer(_PluginBase):
             return
         fids = [sid for sid, _, _ in movable]
         try:
+            logger.info(f"【115云端媒体整理】batch_move({len(fids)} -> {final_parent})")
             p115.batch_move(fids, final_parent)
             for sid, item, name in movable:
                 item["target_name"] = name
