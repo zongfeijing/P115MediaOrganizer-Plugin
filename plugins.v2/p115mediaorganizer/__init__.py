@@ -1,4 +1,5 @@
 import json
+import random
 import time
 import traceback
 from datetime import datetime, timedelta
@@ -21,7 +22,7 @@ from app.schemas.types import MediaType, NotificationType
 
 from .category_mapper import DEFAULT_CATEGORY_MAPPING, CategoryMapper
 from .models import ExecuteResult
-from .p115_ops import P115Ops, P115UnavailableError
+from .p115_ops import ANTI_BLOCK_DEFAULTS, P115Ops, P115UnavailableError
 from .planner import Planner
 
 
@@ -61,7 +62,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "0.3.1"
+    plugin_version = "0.3.3"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -89,6 +90,11 @@ class P115MediaOrganizer(_PluginBase):
     _source_mappings = json.dumps(DEFAULT_SOURCE_MAPPINGS, ensure_ascii=False, indent=2)
     _category_mapping = json.dumps(DEFAULT_CATEGORY_MAPPING, ensure_ascii=False, indent=2)
     _target_cids = json.dumps(DEFAULT_TARGET_CIDS, ensure_ascii=False, indent=2)
+    _min_request_interval_ms = ANTI_BLOCK_DEFAULTS["min_request_interval_ms"]
+    _max_retries = ANTI_BLOCK_DEFAULTS["max_retries"]
+    _retry_base_seconds = ANTI_BLOCK_DEFAULTS["retry_base_seconds"]
+    _jitter_ratio = ANTI_BLOCK_DEFAULTS["jitter_ratio"]
+    _list_page_size = ANTI_BLOCK_DEFAULTS["list_page_size"]
     _history_limit = 1000
     _run_limit = 100
     _history_page = 1
@@ -96,9 +102,11 @@ class P115MediaOrganizer(_PluginBase):
     _run_page = 1
     _run_page_size = 10
     _scheduler = None
+    _ops_instance = None
 
     def init_plugin(self, config: dict = None):
         self.stop_service()
+        self._ops_instance = None  # 配置可能变了，重置缓存的 P115Ops 单例
         config = config or {}
         self._enabled = bool(config.get("enabled", False))
         self._notify = bool(config.get("notify", True))
@@ -121,6 +129,11 @@ class P115MediaOrganizer(_PluginBase):
         self._source_mappings = config.get("source_mappings") or self._source_mappings
         self._category_mapping = config.get("category_mapping") or self._category_mapping
         self._target_cids = config.get("target_cids") or self._target_cids
+        self._min_request_interval_ms = max(0, self._safe_int(config.get("min_request_interval_ms"), ANTI_BLOCK_DEFAULTS["min_request_interval_ms"]))
+        self._max_retries = max(0, self._safe_int(config.get("max_retries"), ANTI_BLOCK_DEFAULTS["max_retries"]))
+        self._retry_base_seconds = max(0.1, self._safe_float(config.get("retry_base_seconds"), ANTI_BLOCK_DEFAULTS["retry_base_seconds"]))
+        self._jitter_ratio = max(0.0, min(1.0, self._safe_float(config.get("jitter_ratio"), ANTI_BLOCK_DEFAULTS["jitter_ratio"])))
+        self._list_page_size = max(50, self._safe_int(config.get("list_page_size"), ANTI_BLOCK_DEFAULTS["list_page_size"]))
         self._history_limit = self._safe_int(config.get("history_limit"), 1000)
         self._run_limit = self._safe_int(config.get("run_limit"), 100)
         self._history_page = max(1, self._safe_int(config.get("history_page"), 1))
@@ -131,6 +144,15 @@ class P115MediaOrganizer(_PluginBase):
             f"【115云端媒体整理】插件初始化：enabled={self._enabled}，dry_run={self._dry_run}，"
             f"onlyonce={self._onlyonce}，cron={self._cron or '未设置'}，来源映射={len(self._source_mapping_list())} 个"
         )
+
+        # 升级路径：把已存档的旧 config 里缺失的反封锁字段回填默认值，
+        # 让用户打开表单时能看到当前生效的默认值而不是空白
+        missing = [k for k in ANTI_BLOCK_DEFAULTS if k not in config]
+        if missing:
+            for key in missing:
+                config[key] = ANTI_BLOCK_DEFAULTS[key]
+            logger.info(f"【115云端媒体整理】已为旧配置回填反封锁默认值：{missing}")
+            self.update_config(config=config)
 
         if self._onlyonce:
             logger.info("【115云端媒体整理】已安排立即运行任务，约 3 秒后触发")
@@ -165,6 +187,7 @@ class P115MediaOrganizer(_PluginBase):
             {"path": "/clear_history", "endpoint": self.clear_history, "methods": ["POST"], "auth": "bear", "summary": "清空整理历史"},
             {"path": "/resolve_path", "endpoint": self.resolve_path_api, "methods": ["POST"], "auth": "bear", "summary": "解析115路径"},
             {"path": "/list_dir", "endpoint": self.list_dir_api, "methods": ["POST"], "auth": "bear", "summary": "列出115目录"},
+            {"path": "/cookie_check", "endpoint": self.cookie_check_api, "methods": ["POST", "GET"], "auth": "bear", "summary": "检查115 Cookie健康状态"},
         ]
 
     def get_service(self) -> List[Dict[str, Any]]:
@@ -233,6 +256,18 @@ class P115MediaOrganizer(_PluginBase):
             self._row([self._col(self._textarea("exclude_keywords", "排除关键词，逗号分隔", rows=2), 12)]),
             self._row([self._col(self._textarea("category_mapping", "分类别名映射JSON（可选）", rows=5), 12)]),
         ]
+        anti_block_content = [
+            self._form_hint("控制对 115 API 的节奏，避免被风控限频；默认值对单账号已比较保守，按需调整"),
+            self._row([
+                self._col(self._text("min_request_interval_ms", "最小请求间隔(ms)"), 4),
+                self._col(self._text("max_retries", "最大重试次数"), 4),
+                self._col(self._text("retry_base_seconds", "重试退避基数(秒)"), 4),
+            ]),
+            self._row([
+                self._col(self._text("jitter_ratio", "抖动比例 0~1"), 6),
+                self._col(self._text("list_page_size", "目录分页大小"), 6),
+            ]),
+        ]
         return [{
             "component": "VForm",
             "content": self._tabs_window([
@@ -240,6 +275,7 @@ class P115MediaOrganizer(_PluginBase):
                 ("exec", "执行", exec_content),
                 ("cookie", "115 连接", cookie_content),
                 ("dir", "目录", dir_content),
+                ("anti_block", "反封锁", anti_block_content),
                 ("advanced", "高级", advanced_content),
             ], model="_form_tab"),
         }], self._default_config()
@@ -252,6 +288,7 @@ class P115MediaOrganizer(_PluginBase):
         p115 = self._p115_ops()
         p115_ok = bool(p115.available)
         p115_status = "可用" if p115_ok else (p115.import_error or "不可用")
+        health = p115.health_check(force=False) if p115_ok else {"ok": False, "message": p115_status, "checked_at": ""}
 
         sources = self._source_mapping_list()
         last_run_time = ""
@@ -389,6 +426,8 @@ class P115MediaOrganizer(_PluginBase):
                 {"component": "h2", "props": {"class": "text-h6 ma-0"}, "text": "115云端媒体整理"},
                 {"component": "VSpacer"},
                 self._action_button("重新生成计划", "dry_run_all", "post", "primary", "mdi-refresh"),
+                self._action_button("检查 Cookie", "cookie_check", "post", "info", "mdi-shield-key",
+                                    variant="outlined"),
                 self._action_button("执行计划", "execute_last_plan", "post", "error", "mdi-play",
                                     variant="outlined"),
             ],
@@ -397,12 +436,12 @@ class P115MediaOrganizer(_PluginBase):
         runs_truncated_hint = {
             "component": "div",
             "props": {"class": "text-caption text-medium-emphasis mb-2"},
-            "text": f"共 {len(runs)} 个批次，显示最近 {min(50, len(runs))} 个。完整批次请用 /api/v1/plugin/P115MediaOrganizer/history_page?apikey=... 查询。",
+            "text": f"共 {len(runs)} 个批次，显示最近 {min(50, len(runs))} 个。需要完整批次请通过 MoviePilot API 客户端调用 history_page 接口（bearer 鉴权）。",
         }
         history_truncated_hint = {
             "component": "div",
             "props": {"class": "text-caption text-medium-emphasis mb-2"},
-            "text": f"共 {len(history)} 条明细，显示最近 {min(50, len(history))} 条。完整明细同上接口可查。",
+            "text": f"共 {len(history)} 条明细，显示最近 {min(50, len(history))} 条。需要完整明细同上接口可查。",
         }
 
         panel_items = [
@@ -448,7 +487,7 @@ class P115MediaOrganizer(_PluginBase):
             "component": "VContainer",
             "content": [
                 header,
-                self._status_strip(p115_status, p115_ok, self._dry_run, len(sources), last_run_time),
+                self._status_strip(p115_status, p115_ok, self._dry_run, len(sources), last_run_time, health),
                 self._metric_row(metrics),
                 panels,
             ],
@@ -586,7 +625,7 @@ class P115MediaOrganizer(_PluginBase):
                 record = self._history_record(item, "failed", item.get("error") or "", run_id=run_id)
                 history.append(record)
                 run_history.append(record)
-            time.sleep(max(0.0, self._sleep_between_batches))
+            time.sleep(self._jitter_sleep(self._sleep_between_batches))
         cleaned_dirs = []
         if self._delete_empty_source_dirs:
             cleaned_dirs = self._cleanup_empty_source_dirs(p115)
@@ -677,6 +716,12 @@ class P115MediaOrganizer(_PluginBase):
             return schemas.Response(success=True, data={"path": path or "/", "cid": cid, "items": entries})
         except Exception as err:
             return schemas.Response(success=False, message=str(err))
+
+    def cookie_check_api(self, data: dict = None):
+        force = self._safe_bool((data or {}).get("force"), default=True)
+        p115 = self._p115_ops()
+        result = p115.health_check(force=force)
+        return schemas.Response(success=bool(result.get("ok")), message=result.get("message"), data=result)
 
     def auto_run(self):
         logger.info(f"【115云端媒体整理】自动运行开始：dry_run={self._dry_run}")
@@ -875,7 +920,19 @@ class P115MediaOrganizer(_PluginBase):
         return [item.strip() for item in self._exclude_keywords.split(",") if item.strip()]
 
     def _p115_ops(self) -> P115Ops:
-        return P115Ops(cookie_path=self._cookie_path, cookie_text=self._cookie_text)
+        # 单例复用：让 P115Ops 内部的限速 / cookie 健康 30s 缓存跨调用真正生效。
+        # 配置变更走 init_plugin → 那里会把 _ops_instance 清空，下次调用自然重建。
+        if self._ops_instance is None:
+            self._ops_instance = P115Ops(
+                cookie_path=self._cookie_path,
+                cookie_text=self._cookie_text,
+                min_interval=self._min_request_interval_ms / 1000.0,
+                max_retries=self._max_retries,
+                retry_base=self._retry_base_seconds,
+                jitter_ratio=self._jitter_ratio,
+                list_page_size=self._list_page_size,
+            )
+        return self._ops_instance
 
     def _refresh_plex_after_success(self, success_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not success_items:
@@ -1168,6 +1225,11 @@ class P115MediaOrganizer(_PluginBase):
             "exclude_keywords": "sample,trailer,花絮,预告",
             "category_mapping": json.dumps(DEFAULT_CATEGORY_MAPPING, ensure_ascii=False, indent=2),
             "target_cids": json.dumps(DEFAULT_TARGET_CIDS, ensure_ascii=False, indent=2),
+            "min_request_interval_ms": ANTI_BLOCK_DEFAULTS["min_request_interval_ms"],
+            "max_retries": ANTI_BLOCK_DEFAULTS["max_retries"],
+            "retry_base_seconds": ANTI_BLOCK_DEFAULTS["retry_base_seconds"],
+            "jitter_ratio": ANTI_BLOCK_DEFAULTS["jitter_ratio"],
+            "list_page_size": ANTI_BLOCK_DEFAULTS["list_page_size"],
             "history_limit": 1000,
             "run_limit": 100,
             "history_page": 1,
@@ -1222,6 +1284,16 @@ class P115MediaOrganizer(_PluginBase):
             return float(value)
         except Exception:
             return default
+
+    def _jitter_sleep(self, base: float) -> float:
+        """对固定 sleep 值施加 ±jitter_ratio 的随机抖动，避免可识别的节奏。"""
+        base = max(0.0, float(base or 0.0))
+        if base <= 0:
+            return 0.0
+        ratio = max(0.0, min(1.0, float(self._jitter_ratio or 0.0)))
+        if ratio <= 0:
+            return base
+        return base * random.uniform(1.0 - ratio, 1.0 + ratio)
 
     @staticmethod
     def _switch(model: str, label: str) -> Dict[str, Any]:
@@ -1446,7 +1518,8 @@ class P115MediaOrganizer(_PluginBase):
 
     @staticmethod
     def _status_strip(p115_status: str, p115_ok: bool, dry_run: bool,
-                      source_count: int, last_run_time: str) -> Dict[str, Any]:
+                      source_count: int, last_run_time: str,
+                      health: Dict[str, Any] = None) -> Dict[str, Any]:
         parts = [
             f"p115client：{p115_status}",
             f"dry_run：{'是' if dry_run else '否'}",
@@ -1454,10 +1527,18 @@ class P115MediaOrganizer(_PluginBase):
         ]
         if last_run_time:
             parts.append(f"上次执行：{last_run_time}")
+        cookie_ok = bool((health or {}).get("ok")) if health is not None else p115_ok
+        if health is not None:
+            cookie_msg = health.get("message") or ("Cookie 正常" if cookie_ok else "Cookie 未知")
+            checked_at = health.get("checked_at") or ""
+            parts.append(
+                f"Cookie：{'✓ ' + cookie_msg if cookie_ok else '✗ ' + cookie_msg}"
+                + (f"（{checked_at}）" if checked_at else "")
+            )
         return {
             "component": "VAlert",
             "props": {
-                "type": "success" if p115_ok else "warning",
+                "type": "success" if (p115_ok and cookie_ok) else ("warning" if p115_ok else "error"),
                 "variant": "tonal",
                 "density": "compact",
                 "class": "mb-3",

@@ -22,12 +22,20 @@ plugins.v2/p115mediaorganizer
 
 ### 115 Connection
 
-The plugin uses `p115client`, so it needs a 115 web cookie. If the dependency disappears after a MoviePilot/container update, the plugin will automatically run `python -m pip install p115client` on first 115 connection attempt and retry the import.
+The plugin uses `p115client`. MoviePilot installs plugin dependencies automatically from `requirements.txt`, so you normally do not need to install it by hand. If for some reason `p115client` is missing inside the MoviePilot container, install it manually and restart:
+
+```bash
+pip install 'p115client>=0.0.8'
+```
+
+The previous behavior of running `pip install` from inside a request has been removed — that path could block the API call for up to two minutes and made failures harder to recover from.
 
 Cookie options:
 
 - `cookie_path`: point it to a cookie file mounted inside the MoviePilot container, for example `/config/115-cookies.txt`.
 - `cookie_text`: paste a cookie directly when the file path is unavailable or invalid.
+
+`p115client` is constructed with `check_for_relogin=True` when supported, so it can re-trigger a QR login and write the cookie back when the existing one expires.
 
 ### Directory Mapping
 
@@ -111,6 +119,20 @@ The plugin details page shows:
 - recent run summaries and history details
 - full paginated history page linked from the details page
 - cleaned empty source directory count
+
+## Anti-Throttling
+
+The plugin paces and retries 115 API calls to reduce the chance of being rate-limited or flagged. All settings live under the "反封锁" tab in the plugin form.
+
+- `min_request_interval_ms` (default `300`) — minimum gap between two 115 API calls, in milliseconds. With the default this caps the plugin at roughly 3 requests per second per account.
+- `max_retries` (default `3`) — retries when 115 returns a known rate-limit / busy errno (e.g. `990009`, `990019`, `40140117`) or other transient `P115OperationalError`. A `P115LoginError` (cookie expired) is **never** retried — it is surfaced immediately. Side-effecting calls (`move`, `rename`, `delete`, `mkdir`) intentionally skip retries to avoid double-executing operations whose first attempt may have already taken effect on the 115 server; only read-only APIs (`list_entries`, `resolve_path`) consume this budget. The cookie health probe is capped at 1 retry so the UI button does not block for ~10s on transient errors.
+- `retry_base_seconds` (default `1.5`) — base for exponential backoff. Retries sleep for `base * 2^attempt`, jittered.
+- `jitter_ratio` (default `0.3`, range `0~1`) — every sleep (throttle gap, retry backoff, batch gap) is multiplied by `uniform(1 - r, 1 + r)` so the request rhythm does not look mechanical.
+- `list_page_size` (default `200`) — page size used when calling `fs_files`. The plugin pages through directories explicitly to avoid huge single responses and to make sure large directories are not silently truncated.
+
+A `POST /api/v1/plugin/P115MediaOrganizer/cookie_check` endpoint runs a lightweight `fs_space_info` (or `fs_files` fallback) probe and updates the "Cookie" badge in the details page header. The same check is also reused (with a 30s cache) when the details page is rendered.
+
+When the plugin cannot list a directory after all retries, it now logs a warning and skips just that subtree instead of aborting the whole dry-run.
 
 ## Safety Notes
 
