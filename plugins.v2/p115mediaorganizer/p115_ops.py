@@ -35,6 +35,9 @@ ANTI_BLOCK_DEFAULTS: Dict[str, Any] = {
 # rename → move 之间的最小间隔，防止用户把 min_interval 设为 0 时 rename 还未在 115 服务端生效就触发 move
 RENAME_MOVE_MIN_GAP = 0.05
 
+# batch_rename 单请求 fid 上限：超过由上层切片
+BATCH_RENAME_MAX = 50
+
 
 class P115UnavailableError(RuntimeError):
     pass
@@ -520,6 +523,61 @@ class P115Ops:
                 retries=0,
             )
         raise P115UnavailableError("当前p115client未找到可用的移动API")
+
+    # ---- 批量操作 ----
+    # 三个 batch 方法实现风格一致：都走 getattr(client, "fs_xxx") + _call(method, payload, retries=0)。
+    # 副作用 API 不重试避免"实际已成功但响应被解读为限频"导致的重复执行。
+
+    def batch_move(self, fids: List[str], target_cid: str) -> Dict[str, Any]:
+        """一次性把多个 fid 移动到同一 target_cid。fs_move 原生支持 Iterable[fid]。"""
+        if not fids:
+            return {"state": True, "moved": 0}
+        client = self.require_client()
+        for method_name in ("fs_move", "move"):
+            method = getattr(client, method_name, None)
+            if not method:
+                continue
+            return self._invoke_with_signatures(
+                f"batch_move({len(fids)}->{target_cid})", method,
+                (lambda: (list(fids),), {"pid": target_cid}),
+                (lambda: (list(fids),), {"to_cid": target_cid}),
+                retries=0,
+            )
+        raise P115UnavailableError("当前p115client未找到可用的移动API")
+
+    def batch_delete(self, fids: List[str]) -> Dict[str, Any]:
+        """一次性删除多个 fid。fs_delete 原生支持 Iterable[fid]。"""
+        if not fids:
+            return {"state": True, "deleted": 0}
+        client = self.require_client()
+        for method_name in ("fs_delete", "delete", "remove"):
+            method = getattr(client, method_name, None)
+            if not method:
+                continue
+            return self._invoke_with_signatures(
+                f"batch_delete({len(fids)})", method,
+                (lambda: (list(fids),), {}),
+                retries=0,
+            )
+        raise P115UnavailableError("当前p115client未找到可用的删除API")
+
+    def batch_rename(self, renames: Dict[str, str]) -> Dict[str, Any]:
+        """renames: {fid: new_name}。p115client.fs_rename 接受 Iterable[(fid, name)]，
+        内部自动转成 batch_rename payload（files_new_name[<fid>]=<name>）POST 到
+        /files/batch_rename。单批超过 BATCH_RENAME_MAX 由上层切片。
+        """
+        if not renames:
+            return {"state": True, "renamed": 0}
+        client = self.require_client()
+        method = getattr(client, "fs_rename", None)
+        if method is None:
+            raise P115UnavailableError("当前p115client未找到 fs_rename API")
+        return self._call(
+            f"batch_rename({len(renames)})",
+            method,
+            list(renames.items()),
+            retries=0,
+        )
 
     def _invoke_with_signatures(self, label: str, method: Callable, *variants,
                                  retries: Optional[int] = None):

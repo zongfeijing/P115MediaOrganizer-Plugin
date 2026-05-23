@@ -134,6 +134,18 @@ A `POST /api/v1/plugin/P115MediaOrganizer/cookie_check` endpoint runs a lightwei
 
 When the plugin cannot list a directory after all retries, it now logs a warning and skips just that subtree instead of aborting the whole dry-run.
 
+## Batch Execution
+
+Since v0.4.0 the plugin executes the organize plan in **batches** grouped by target parent directory. For 30 files going into the same category, the typical write API count drops from ~60 (30 `fs_rename` + 30 `fs_move`) to ~2 (one `batch_rename` + one `batch_move`), which proportionally lowers exposure to 115 rate limiting.
+
+- `batch_size` (default `30`) — maximum number of files in a single batch. A group larger than this gets sliced into multiple batches. Previously this knob was dead code in the UI; it is now the real chunking control.
+- `sleep_between_batches` (default `1.0s`) — gap between batches. **Semantic change from older versions**: this used to be sleep-per-item; now it is sleep-per-batch (a batch can be 1 to `batch_size` files). With batches typically holding 10s of items, total wait time is dramatically lower than before.
+- `BATCH_RENAME_MAX = 50` (internal constant) — additional safety cap on the `batch_rename` POST body. A group of 50+ renames is split into multiple `batch_rename` calls even when `batch_size` is larger.
+
+On any batch failure (`batch_rename`, `batch_move`, or `batch_delete`) the plugin transparently falls back to per-item calls so each item still gets its own success / failure entry in the history page. The default cookie-expired path remains: a `P115LoginError` aborts the run instead of looping per item.
+
+The empty-source-dir cleanup at the end of `execute_last_plan` also uses `batch_delete` with the same fallback behavior.
+
 ## Safety Notes
 
 - Defaults to dry-run.

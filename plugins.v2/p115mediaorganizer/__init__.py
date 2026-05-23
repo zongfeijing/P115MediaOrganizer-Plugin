@@ -5,7 +5,7 @@ import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 from html import escape
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 import pytz
@@ -22,8 +22,8 @@ from app.schemas.types import MediaType, NotificationType
 
 from .category_mapper import DEFAULT_CATEGORY_MAPPING, CategoryMapper
 from .models import ExecuteResult
-from .p115_ops import ANTI_BLOCK_DEFAULTS, P115Ops, P115UnavailableError
-from .planner import Planner
+from .p115_ops import ANTI_BLOCK_DEFAULTS, BATCH_RENAME_MAX, P115Ops, P115UnavailableError
+from .planner import Planner, compute_batch_group_key
 
 
 DEFAULT_SOURCE_MAPPINGS = [
@@ -62,7 +62,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "0.3.3"
+    plugin_version = "0.4.0"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -576,56 +576,39 @@ class P115MediaOrganizer(_PluginBase):
         result = ExecuteResult(plan_id=plan[0].get("plan_id") if plan else "", total=len(plan))
         p115 = self._p115_ops()
         history = self.get_data("history") or []
-        run_history = []
-        success_items = []
+        run_history: List[Dict[str, Any]] = []
+        success_items: List[Dict[str, Any]] = []
+
+        # 1. 提前消化 action=skip / status=skipped 的项，避免进入 batch 阶段
+        pending: List[Dict[str, Any]] = []
         for item in plan:
             if item.get("action") == "skip" or item.get("status") == "skipped":
-                result.skipped += 1
-                item["status"] = "skipped"
-                item["error"] = item.get("error") or "计划项标记为跳过"
-                record = self._history_record(item, "skipped", item.get("error") or "", run_id=run_id)
-                history.append(record)
-                run_history.append(record)
+                self._record_outcome(item, "skipped",
+                                     item.get("error") or "计划项标记为跳过",
+                                     run_id, history, run_history, result, success_items)
                 continue
-            try:
-                outcome = p115.execute_move(item, conflict_strategy=self._conflict_strategy)
-                if outcome.get("success"):
-                    result.success += 1
-                    logger.info(f"【115云端媒体整理】执行成功：{item.get('source_name')} -> {item.get('target_path')}")
-                    item["status"] = "executed"
-                    item["target_name"] = outcome.get("target_name") or item.get("target_name")
-                    item["target_parent_cid"] = outcome.get("target_parent_cid") or item.get("target_parent_cid")
-                    success_items.append(dict(item))
-                    record = self._history_record(item, "executed", "", run_id=run_id)
-                    history.append(record)
-                    run_history.append(record)
-                elif outcome.get("skipped"):
-                    result.skipped += 1
-                    logger.info(f"【115云端媒体整理】执行跳过：{item.get('source_name')}，原因：{outcome.get('message')}")
-                    item["status"] = "skipped"
-                    item["error"] = outcome.get("message")
-                    record = self._history_record(item, "skipped", item.get("error") or "", run_id=run_id)
-                    history.append(record)
-                    run_history.append(record)
-                else:
-                    result.failed += 1
-                    logger.info(f"【115云端媒体整理】执行失败：{item.get('source_name')}，原因：{outcome.get('message')}")
-                    item["status"] = "failed"
-                    item["error"] = outcome.get("message")
-                    result.errors.append({"source": item.get("source_name"), "error": item.get("error")})
-                    record = self._history_record(item, "failed", item.get("error") or "", run_id=run_id)
-                    history.append(record)
-                    run_history.append(record)
-            except Exception as err:
-                result.failed += 1
-                logger.info(f"【115云端媒体整理】执行异常：{item.get('source_name')}，原因：{err}")
-                item["status"] = "failed"
-                item["error"] = str(err)
-                result.errors.append({"source": item.get("source_name"), "error": str(err)})
-                record = self._history_record(item, "failed", item.get("error") or "", run_id=run_id)
-                history.append(record)
-                run_history.append(record)
-            time.sleep(self._jitter_sleep(self._sleep_between_batches))
+            pending.append(item)
+
+        # 2. 按 batch_group_key 分组（旧 plan 缺字段时即时计算）
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for item in pending:
+            key = item.get("batch_group_key") or compute_batch_group_key(item)
+            groups.setdefault(key, []).append(item)
+
+        batch_size = max(1, self._batch_size)
+        logger.info(
+            f"【115云端媒体整理】batch 分组完成：{len(groups)} 个 group，"
+            f"待处理 {len(pending)} 个 item，batch_size={batch_size}"
+        )
+
+        # 3. 逐 group 执行；同 group 内按 batch_size 切片；批与批之间 sleep
+        for group_key, items in groups.items():
+            for offset in range(0, len(items), batch_size):
+                chunk = items[offset:offset + batch_size]
+                self._execute_group(p115, chunk, run_id,
+                                    history, run_history, result, success_items)
+                time.sleep(self._jitter_sleep(self._sleep_between_batches))
+
         cleaned_dirs = []
         if self._delete_empty_source_dirs:
             cleaned_dirs = self._cleanup_empty_source_dirs(p115)
@@ -890,6 +873,196 @@ class P115MediaOrganizer(_PluginBase):
                 except Exception:
                     pass
 
+    def _record_outcome(self, item: Dict[str, Any], status: str, error: str,
+                        run_id: str,
+                        history: List[Dict[str, Any]],
+                        run_history: List[Dict[str, Any]],
+                        result: ExecuteResult,
+                        success_items: Optional[List[Dict[str, Any]]] = None) -> None:
+        """统一更新 item 字段 + 写 history 记录 + 累加 ExecuteResult。"""
+        item["status"] = status
+        if error:
+            item["error"] = error
+        elif status == "executed":
+            item["error"] = None
+        record = self._history_record(item, status, error or "", run_id=run_id)
+        history.append(record)
+        run_history.append(record)
+        if status == "executed":
+            result.success += 1
+            if success_items is not None:
+                success_items.append(dict(item))
+            logger.info(f"【115云端媒体整理】执行成功：{item.get('source_name')} -> {item.get('target_path')}")
+        elif status == "skipped":
+            result.skipped += 1
+            logger.info(f"【115云端媒体整理】执行跳过：{item.get('source_name')}，原因：{error}")
+        elif status == "failed":
+            result.failed += 1
+            result.errors.append({"source": item.get("source_name"), "error": error or ""})
+            logger.info(f"【115云端媒体整理】执行失败：{item.get('source_name')}，原因：{error}")
+
+    def _execute_group(self, p115: P115Ops,
+                       items: List[Dict[str, Any]],
+                       run_id: str,
+                       history: List[Dict[str, Any]],
+                       run_history: List[Dict[str, Any]],
+                       result: ExecuteResult,
+                       success_items: List[Dict[str, Any]]) -> None:
+        """处理一个 batch（来自同 group，长度 ≤ batch_size）。
+        一次 ensure_dir + 一次 list_entries 冲突检查 + batch_rename + batch_move；
+        任一阶段抛错时退回逐条 fallback，单条粒度的成功/失败仍写入 history。
+        """
+        # 准入：缺关键 ID 的直接 failed
+        accepted: List[tuple] = []  # (source_id, item)
+        for item in items:
+            source_id = item.get("source_cid") if item.get("source_is_dir") else item.get("source_fid")
+            if not source_id:
+                self._record_outcome(item, "failed", "源文件ID为空",
+                                     run_id, history, run_history, result, success_items)
+                continue
+            if not item.get("target_parent_cid"):
+                self._record_outcome(item, "failed", "目标父目录CID为空",
+                                     run_id, history, run_history, result, success_items)
+                continue
+            accepted.append((source_id, item))
+        if not accepted:
+            return
+
+        first_item = accepted[0][1]
+
+        # ensure_dir：同 group 共享同一目标分类目录 + 季目录，只 ensure 一次
+        try:
+            final_parent = p115.ensure_dir(first_item["target_parent_cid"],
+                                            first_item.get("target_dir_name"))
+            if first_item.get("target_season_dir_name"):
+                final_parent = p115.ensure_dir(final_parent,
+                                                first_item["target_season_dir_name"])
+        except Exception as err:
+            for _, item in accepted:
+                self._record_outcome(item, "failed", f"创建目标目录失败：{err}",
+                                     run_id, history, run_history, result, success_items)
+            return
+
+        # 一次性 list_entries 目标目录，构造同名文件集合做冲突检测；失败则全组退回逐条
+        try:
+            existing_entries = p115.list_entries(final_parent)
+        except P115UnavailableError as err:
+            logger.warning(
+                f"【115云端媒体整理】list_entries({final_parent}) 失败，本组退回逐条 fallback：{err}"
+            )
+            for _, item in accepted:
+                self._execute_single_item_fallback(p115, item, run_id,
+                                                    history, run_history, result, success_items)
+            return
+        existing_file_names = {p115.entry_name(e) for e in existing_entries if not p115.is_folder(e)}
+
+        # 决定每个 item 的最终 target_name；冲突按 conflict_strategy 处理
+        to_process: List[tuple] = []  # (source_id, item, final_target_name)
+        for source_id, item in accepted:
+            target_name = item.get("target_name") or item.get("source_name")
+            if not item.get("source_is_dir") and target_name in existing_file_names:
+                if self._conflict_strategy == "skip":
+                    self._record_outcome(item, "skipped", f"目标已存在：{target_name}",
+                                         run_id, history, run_history, result, success_items)
+                    continue
+                if self._conflict_strategy == "rename_with_suffix":
+                    target_name = self._next_available_in_set(target_name, existing_file_names)
+                    existing_file_names.add(target_name)  # 同组内后续 item 不再撞这个新名字
+            to_process.append((source_id, item, target_name))
+        if not to_process:
+            return
+
+        # 阶段 1：batch_rename（只针对需要改名的 item，按 BATCH_RENAME_MAX 切片）
+        renames = {sid: name for sid, item, name in to_process
+                   if name != item.get("source_name")}
+        rename_failed_sids = set()
+        if renames:
+            try:
+                for chunk in self._chunks_dict(renames, BATCH_RENAME_MAX):
+                    p115.batch_rename(chunk)
+            except P115UnavailableError as err:
+                logger.warning(f"【115云端媒体整理】batch_rename 失败，逐条 fallback：{err}")
+                item_by_sid = {sid: item for sid, item, _ in to_process}
+                for fid, name in renames.items():
+                    try:
+                        p115.rename(fid, name)
+                    except Exception as single_err:
+                        rename_failed_sids.add(fid)
+                        item = item_by_sid.get(fid)
+                        if item is not None:
+                            self._record_outcome(item, "failed", f"rename 失败：{single_err}",
+                                                 run_id, history, run_history, result, success_items)
+
+        # 阶段 2：batch_move（剔除 rename 失败的）
+        movable = [(sid, item, name) for sid, item, name in to_process
+                   if sid not in rename_failed_sids]
+        if not movable:
+            return
+        fids = [sid for sid, _, _ in movable]
+        try:
+            p115.batch_move(fids, final_parent)
+            for sid, item, name in movable:
+                item["target_name"] = name
+                item["target_parent_cid"] = final_parent
+                self._record_outcome(item, "executed", "",
+                                     run_id, history, run_history, result, success_items)
+        except P115UnavailableError as err:
+            logger.warning(f"【115云端媒体整理】batch_move 失败，逐条 fallback：{err}")
+            for sid, item, name in movable:
+                try:
+                    p115.move(sid, final_parent)
+                    item["target_name"] = name
+                    item["target_parent_cid"] = final_parent
+                    self._record_outcome(item, "executed", "",
+                                         run_id, history, run_history, result, success_items)
+                except Exception as single_err:
+                    self._record_outcome(item, "failed", f"move 失败：{single_err}",
+                                         run_id, history, run_history, result, success_items)
+
+    def _execute_single_item_fallback(self, p115: P115Ops,
+                                       item: Dict[str, Any],
+                                       run_id: str,
+                                       history: List[Dict[str, Any]],
+                                       run_history: List[Dict[str, Any]],
+                                       result: ExecuteResult,
+                                       success_items: List[Dict[str, Any]]) -> None:
+        """单条 fallback：当 ensure_dir / list_entries 失败、batch 路径不可用时用旧 execute_move。"""
+        try:
+            outcome = p115.execute_move(item, conflict_strategy=self._conflict_strategy)
+            if outcome.get("success"):
+                item["target_name"] = outcome.get("target_name") or item.get("target_name")
+                item["target_parent_cid"] = outcome.get("target_parent_cid") or item.get("target_parent_cid")
+                self._record_outcome(item, "executed", "",
+                                     run_id, history, run_history, result, success_items)
+            elif outcome.get("skipped"):
+                self._record_outcome(item, "skipped", outcome.get("message") or "",
+                                     run_id, history, run_history, result, success_items)
+            else:
+                self._record_outcome(item, "failed", outcome.get("message") or "",
+                                     run_id, history, run_history, result, success_items)
+        except Exception as err:
+            self._record_outcome(item, "failed", str(err),
+                                 run_id, history, run_history, result, success_items)
+
+    @staticmethod
+    def _chunks_dict(d: Dict[str, str], size: int):
+        items = list(d.items())
+        for i in range(0, len(items), size):
+            yield dict(items[i:i + size])
+
+    @staticmethod
+    def _next_available_in_set(name: str, existing: set) -> str:
+        """在已知集合 existing 中找 'name (N).ext' 形式的下一个不冲突候选名。"""
+        path = Path(name)
+        stem = path.stem if path.suffix else name
+        suffix = path.suffix
+        counter = 1
+        while True:
+            candidate = f"{stem} ({counter}){suffix}"
+            if candidate not in existing:
+                return candidate
+            counter += 1
+
     def _cleanup_empty_source_dirs(self, p115: P115Ops) -> List[str]:
         cleaned = []
         source_roots = set()
@@ -905,14 +1078,32 @@ class P115MediaOrganizer(_PluginBase):
             if source_cid:
                 source_roots.add(source_cid)
         logger.info(f"【115云端媒体整理】开始清理空来源目录：来源根 {len(source_roots)} 个")
+        # 1) 自底向上收集每个 source root 下的所有空目录 cid
+        empty_cids_by_root: Dict[str, List[str]] = {}
         for source_cid in source_roots:
-            for empty_cid in p115.list_empty_dirs_bottom_up(source_cid, max(0, self._max_depth) + 2):
+            empty_cids_by_root[source_cid] = list(
+                p115.list_empty_dirs_bottom_up(source_cid, max(0, self._max_depth) + 2)
+            )
+        # 2) 按 batch_size 切片批量删除；失败时退回单条删除以保留单条粒度日志
+        batch_size = max(1, self._batch_size)
+        for source_cid, empty_cids in empty_cids_by_root.items():
+            for offset in range(0, len(empty_cids), batch_size):
+                chunk = empty_cids[offset:offset + batch_size]
+                if not chunk:
+                    continue
                 try:
-                    p115.delete(empty_cid)
-                    cleaned.append(empty_cid)
-                    logger.info(f"【115云端媒体整理】已删除空来源目录：{empty_cid}")
+                    p115.batch_delete(chunk)
+                    cleaned.extend(chunk)
+                    logger.info(f"【115云端媒体整理】批量删除空目录 {len(chunk)} 个")
                 except Exception as err:
-                    logger.warning(f"删除115空源目录失败 {empty_cid}: {err}")
+                    logger.warning(f"【115云端媒体整理】batch_delete 失败，回退逐条：{err}")
+                    for empty_cid in chunk:
+                        try:
+                            p115.delete(empty_cid)
+                            cleaned.append(empty_cid)
+                            logger.info(f"【115云端媒体整理】已删除空来源目录：{empty_cid}")
+                        except Exception as single_err:
+                            logger.warning(f"删除115空源目录失败 {empty_cid}: {single_err}")
         logger.info(f"【115云端媒体整理】空来源目录清理完成：{len(cleaned)} 个")
         return cleaned
 

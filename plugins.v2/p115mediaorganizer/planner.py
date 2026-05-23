@@ -2,12 +2,26 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List
 
 from .category_mapper import CategoryMapper
 from .models import MediaItem, OrganizePlan
+
+
+def compute_batch_group_key(plan: Dict[str, Any]) -> str:
+    """同 key 的 plan item 共享目标父目录 + 目标分类目录 + 季目录，
+    执行阶段可一次性 batch_rename + batch_move。
+    """
+    return "|".join([
+        str(plan.get("media_type") or ""),
+        str(plan.get("target_parent_cid") or ""),
+        str(plan.get("target_category") or ""),
+        str(plan.get("target_dir_name") or ""),
+        str(plan.get("target_season_dir_name") or ""),
+    ])
 
 
 class Planner:
@@ -114,6 +128,14 @@ class Planner:
                 confidence=confidence,
                 warnings=warnings,
             ).to_dict())
+        # 给每个 plan item 打上 batch_group_key + 同组内的 batch_index，
+        # 执行阶段用同样的 key 分组、index 用于错误定位。
+        group_counters: Dict[str, int] = defaultdict(int)
+        for plan in plans:
+            key = compute_batch_group_key(plan)
+            plan["batch_group_key"] = key
+            plan["batch_index"] = group_counters[key]
+            group_counters[key] += 1
         return plans
 
     def _recognize(self, media_type: str, path_hint: str, warnings: List[str]):
