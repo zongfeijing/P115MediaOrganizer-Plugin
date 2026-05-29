@@ -63,7 +63,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "0.4.2"
+    plugin_version = "0.5.0"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -314,11 +314,11 @@ class P115MediaOrganizer(_PluginBase):
             "component": "div",
             "props": {"class": "mb-3 d-flex flex-wrap"},
             "content": [
-                self._count_chip("待执行", plan_summary.get("planned", 0), "info"),
-                self._count_chip("已执行", plan_summary.get("executed", 0), "success"),
-                self._count_chip("失败", plan_summary.get("failed", 0), "error"),
-                self._count_chip("跳过", plan_summary.get("skipped", 0), "warning"),
-                self._count_chip("共", len(last_plan), "secondary"),
+                self._kv_chip("待执行", plan_summary.get("planned", 0), "info"),
+                self._kv_chip("已执行", plan_summary.get("executed", 0), "success"),
+                self._kv_chip("失败", plan_summary.get("failed", 0), "error"),
+                self._kv_chip("跳过", plan_summary.get("skipped", 0), "warning"),
+                self._kv_chip("共", len(last_plan), "secondary"),
             ],
         }
         plan_headers = [
@@ -361,17 +361,18 @@ class P115MediaOrganizer(_PluginBase):
             "plex_refresh_count": item.get("plex_refresh_count") or 0,
             "cleaned_empty_dirs": item.get("cleaned_empty_dirs") or 0,
         } for item in list(reversed(runs))[:50]]
+        run_mobile_items = run_items_view[:20]
 
-        # 明细 Tab
+        # 明细 Tab（桌面列：状态前置便于扫读、RunID 后置便于排查）
         history_headers = [
+            {"title": "状态", "key": "status", "sortable": True},
             {"title": "时间", "key": "time", "sortable": True},
-            {"title": "Run ID", "key": "run_id", "sortable": False},
             {"title": "类型", "key": "media_type", "sortable": True},
             {"title": "源文件", "key": "source_name", "sortable": True},
-            {"title": "目标分类", "key": "target_category", "sortable": True},
             {"title": "目标名称", "key": "target_name", "sortable": True},
-            {"title": "状态", "key": "status", "sortable": True},
+            {"title": "目标分类", "key": "target_category", "sortable": True},
             {"title": "错误", "key": "error", "sortable": False},
+            {"title": "Run ID", "key": "run_id", "sortable": False},
         ]
         history_items_view = [{
             "time": item.get("time") or "",
@@ -383,6 +384,8 @@ class P115MediaOrganizer(_PluginBase):
             "status": item.get("status") or "",
             "error": item.get("error") or "",
         } for item in list(reversed(history))[:50]]
+        # 手机卡片只取最近 20 条，控制滚动成本
+        history_mobile_items = history_items_view[:20]
 
         # Plex Tab
         plex_rows = [[
@@ -395,10 +398,9 @@ class P115MediaOrganizer(_PluginBase):
         ] for item in (last_result.get("plex_refresh") or [])]
         plex_table = self._table(["服务器", "类型", "分类", "目标路径", "状态", "消息"], plex_rows)
 
-        # 错误 Tab
+        # 失败项数据（表格 + 卡片在 panel 组装处生成）
         error_rows = [[item.get("source"), item.get("error")]
                       for item in (last_result.get("errors") or [])]
-        errors_table = self._table(["源文件", "错误"], error_rows)
 
         # 配置 Tab
         mapping_rows = [[
@@ -424,68 +426,113 @@ class P115MediaOrganizer(_PluginBase):
             {"label": "清理空目录", "value": cleaned_count, "color": "secondary"},
         ]
 
-        header_buttons = [
-            self._action_button("重新生成计划", "dry_run_all", "post", "primary", "mdi-refresh"),
-            self._action_button("检查 Cookie", "cookie_check", "post", "info", "mdi-shield-key",
-                                variant="outlined"),
-            self._action_button("执行计划", "execute_last_plan", "post", "error", "mdi-play",
-                                variant="outlined"),
-        ]
-        # p115client 不可用时把「修复依赖」做成醒目按钮；可用时仍保留一个低调入口供强制重装
-        header_buttons.append(
-            self._action_button(
-                "修复依赖", "install_dependency", "post",
-                "warning" if not p115_ok else "secondary",
-                "mdi-package-down",
-                variant="tonal" if not p115_ok else "outlined",
-            )
-        )
-        header = {
+        # 修复依赖：p115client 不可用时高亮 warning/tonal，可用时低调 secondary/outlined
+        dep_color = "warning" if not p115_ok else "secondary"
+        dep_variant = "tonal" if not p115_ok else "outlined"
+
+        # 桌面 header：标题 + 右侧 inline 按钮
+        desktop_header = {
             "component": "div",
-            "props": {"class": "d-flex align-center flex-wrap mb-3"},
+            "props": {"class": "d-none d-sm-flex align-center flex-wrap mb-3"},
             "content": [
                 {"component": "h2", "props": {"class": "text-h6 ma-0"}, "text": "115云端媒体整理"},
                 {"component": "VSpacer"},
-            ] + header_buttons,
+                self._action_button("重新生成计划", "dry_run_all", "post", "primary", "mdi-refresh"),
+                self._action_button("检查 Cookie", "cookie_check", "post", "info", "mdi-shield-key",
+                                    variant="outlined"),
+                self._action_button("执行计划", "execute_last_plan", "post", "error", "mdi-play",
+                                    variant="outlined"),
+                self._action_button("修复依赖", "install_dependency", "post", dep_color,
+                                    "mdi-package-down", variant=dep_variant),
+            ],
+        }
+
+        # 手机 header：小号标题 + 2×2 block 按钮网格
+        def _mobile_btn_col(text, api, method, color, icon, variant):
+            return {
+                "component": "VCol",
+                "props": {"cols": 6, "class": "pa-1"},
+                "content": [self._action_button(text, api, method, color, icon,
+                                                 variant=variant, block=True, extra_class="")],
+            }
+        mobile_header = {
+            "component": "div",
+            "props": {"class": "d-sm-none mb-3"},
+            "content": [
+                {"component": "div", "props": {"class": "text-subtitle-1 font-weight-medium mb-2"},
+                 "text": "115云端媒体整理"},
+                {"component": "VRow", "props": {"no-gutters": True}, "content": [
+                    _mobile_btn_col("重新生成计划", "dry_run_all", "post", "primary", "mdi-refresh", "flat"),
+                    _mobile_btn_col("执行计划", "execute_last_plan", "post", "error", "mdi-play", "flat"),
+                    _mobile_btn_col("检查 Cookie", "cookie_check", "post", "info", "mdi-shield-key", "outlined"),
+                    _mobile_btn_col("修复依赖", "install_dependency", "post", dep_color, "mdi-package-down", dep_variant),
+                ]},
+            ],
         }
 
         runs_truncated_hint = {
             "component": "div",
             "props": {"class": "text-caption text-medium-emphasis mb-2"},
-            "text": f"共 {len(runs)} 个批次，显示最近 {min(50, len(runs))} 个。需要完整批次请通过 MoviePilot API 客户端调用 history_page 接口（bearer 鉴权）。",
+            "text": f"共 {len(runs)} 个批次，桌面表格显示最近 {min(50, len(runs))} 个、手机卡片显示最近 {min(20, len(runs))} 个。完整批次请通过 MoviePilot API 客户端调用 history_page 接口（bearer 鉴权）。",
         }
         history_truncated_hint = {
             "component": "div",
             "props": {"class": "text-caption text-medium-emphasis mb-2"},
-            "text": f"共 {len(history)} 条明细，显示最近 {min(50, len(history))} 条。需要完整明细同上接口可查。",
+            "text": f"共 {len(history)} 条明细，桌面表格显示最近 {min(50, len(history))} 条、手机卡片显示最近 {min(20, len(history))} 条。完整明细同上接口可查。",
         }
 
         panel_items = [
-            ("history", f"整理明细（共 {len(history)}，显示最近 {min(50, len(history))}）", [
+            ("history", f"明细 {min(50, len(history))}/{len(history)}", [
                 history_truncated_hint,
-                self._data_table(history_headers, history_items_view, empty_text="暂无历史明细"),
+                *self._responsive_table(
+                    self._data_table(history_headers, history_items_view, empty_text="暂无历史明细"),
+                    self._record_cards(history_mobile_items, empty_text="暂无历史明细"),
+                ),
             ]),
-            ("plan", "整理计划", [
+            ("plan", f"计划 {len(last_plan)}", [
                 plan_chips_row,
-                self._data_table(plan_headers, plan_items, empty_text="暂无整理计划"),
+                *([{
+                    "component": "div",
+                    "props": {"class": "text-caption text-medium-emphasis mb-2"},
+                    "text": f"手机卡片显示前 20 条，完整 {len(last_plan)} 条见桌面表格。",
+                }] if len(last_plan) > 20 else []),
+                *self._responsive_table(
+                    self._data_table(plan_headers, plan_items, empty_text="暂无整理计划"),
+                    self._plan_cards(plan_items[:20], empty_text="暂无整理计划"),
+                ),
             ]),
-            ("runs", f"执行批次（共 {len(runs)}，显示最近 {min(50, len(runs))}）", [
+            ("runs", f"批次 {min(50, len(runs))}/{len(runs)}", [
                 runs_truncated_hint,
-                self._data_table(run_headers, run_items_view, empty_text="暂无执行批次"),
+                *self._responsive_table(
+                    self._data_table(run_headers, run_items_view, empty_text="暂无执行批次"),
+                    self._run_cards(run_mobile_items, empty_text="暂无执行批次"),
+                ),
             ]),
         ]
         if plex_rows:
             panel_items.append(("plex", "Plex 刷新", [plex_table]))
+        # 失败项面板：有失败时置顶并默认展开，否则追加到末尾（不展开）。
+        # 以 error_rows 是否非空为唯一判据，避免「计数有失败但 errors 列表空」时
+        # default_open 含一个不存在的 errors 面板。
+        has_failure = bool(error_rows)
         if error_rows:
-            panel_items.append(("errors", "失败项", [errors_table]))
+            failure_body = self._responsive_table(
+                self._table(["源文件", "错误"], error_rows),
+                self._error_cards(error_rows),
+            )
+            panel_items.insert(0, ("errors", f"失败 {len(error_rows)}", failure_body))
         panel_items.append(("config", "配置概览", [
-            self._table(["名称", "类型", "来源路径", "目标根路径"], mapping_rows),
+            *self._responsive_table(
+                self._table(["名称", "类型", "来源路径", "目标根路径"], mapping_rows),
+                self._mapping_cards(mapping_rows),
+            ),
             {"component": "div", "props": {"class": "text-caption mt-3"}, "text": config_summary},
         ]))
 
+        default_open = ["errors", "history"] if has_failure else ["history"]
         panels = {
             "component": "VExpansionPanels",
-            "props": {"multiple": True, "model-value": ["history"], "variant": "accordion", "class": "mb-3"},
+            "props": {"multiple": True, "model-value": default_open, "variant": "accordion", "class": "mb-3"},
             "content": [
                 {
                     "component": "VExpansionPanel",
@@ -502,8 +549,9 @@ class P115MediaOrganizer(_PluginBase):
         return [{
             "component": "VContainer",
             "content": [
-                header,
-                self._status_strip(p115_status, p115_ok, self._dry_run, len(sources), last_run_time, health, dep_install),
+                desktop_header,
+                mobile_header,
+                *self._status_block(p115_status, p115_ok, self._dry_run, len(sources), last_run_time, health, dep_install),
                 self._metric_row(metrics),
                 panels,
             ],
@@ -1654,12 +1702,12 @@ class P115MediaOrganizer(_PluginBase):
     def _metric_card(label: str, value: Any, color: str = "primary") -> Dict[str, Any]:
         return {
             "component": "VCol",
-            "props": {"cols": 6, "sm": 4, "md": 2},
+            "props": {"cols": 4, "sm": 4, "md": 2},
             "content": [{
                 "component": "VCard",
-                "props": {"variant": "tonal", "color": color, "class": "pa-3 text-center"},
+                "props": {"variant": "tonal", "color": color, "class": "pa-2 pa-sm-3 text-center"},
                 "content": [
-                    {"component": "div", "props": {"class": "text-h4 font-weight-bold"}, "text": str(value)},
+                    {"component": "div", "props": {"class": "text-h5 text-sm-h4 font-weight-bold"}, "text": str(value)},
                     {"component": "div", "props": {"class": "text-caption mt-1"}, "text": label},
                 ],
             }],
@@ -1693,20 +1741,24 @@ class P115MediaOrganizer(_PluginBase):
         }
 
     @staticmethod
-    def _count_chip(label: str, count: int, color: str) -> Dict[str, Any]:
+    def _kv_chip(label: str, value: Any, color: str = "default") -> Dict[str, Any]:
+        """通用 key-value chip：文本为 '{label} {value}'。"""
         return {
             "component": "VChip",
             "props": {"color": color, "size": "small", "variant": "tonal", "class": "mr-2 mb-2"},
-            "text": f"{label} {count}",
+            "text": f"{label} {value}",
         }
 
     @staticmethod
     def _action_button(text: str, api_path: str, method: str = "post",
                        color: str = "primary", icon: str = "",
-                       variant: str = "tonal") -> Dict[str, Any]:
+                       variant: str = "tonal", block: bool = False,
+                       extra_class: str = "ml-2") -> Dict[str, Any]:
         # No API token in URL; rely on MoviePilot's frontend to attach the logged-in user's session.
         api_url = f"plugin/P115MediaOrganizer/{api_path}"
-        props = {"color": color, "variant": variant, "size": "small", "class": "ml-2"}
+        props = {"color": color, "variant": variant, "size": "small", "class": extra_class}
+        if block:
+            props["block"] = True
         if icon:
             props["prepend-icon"] = icon
         return {
@@ -1776,43 +1828,204 @@ class P115MediaOrganizer(_PluginBase):
         }
 
     @staticmethod
-    def _status_strip(p115_status: str, p115_ok: bool, dry_run: bool,
+    def _relative_time(ts: Any) -> str:
+        """'YYYY-mm-dd HH:MM:SS' → 相对时间（刚刚/N分钟前/N小时前/N天前）；解析失败回退原串。"""
+        if not ts:
+            return ""
+        if not isinstance(ts, str):
+            return str(ts)
+        try:
+            then = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            return ts
+        delta = datetime.now() - then
+        secs = delta.total_seconds()
+        if secs < 0:
+            return ts
+        if secs < 60:
+            return "刚刚"
+        if secs < 3600:
+            return f"{int(secs // 60)}分钟前"
+        if secs < 86400:
+            return f"{int(secs // 3600)}小时前"
+        if secs < 86400 * 30:
+            return f"{int(secs // 86400)}天前"
+        return ts[:10]
+
+    @staticmethod
+    def _responsive_table(table_node: Dict[str, Any], cards_node: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """桌面显示表格、手机显示卡片：靠断点 class 切换。"""
+        return [
+            {"component": "div", "props": {"class": "d-none d-sm-block"}, "content": [table_node]},
+            {"component": "div", "props": {"class": "d-sm-none"}, "content": [cards_node]},
+        ]
+
+    # ---- 手机卡片公共构件 ----
+
+    @staticmethod
+    def _card_top_row(left_node: Dict[str, Any], time_text: str = "") -> Dict[str, Any]:
+        """卡片顶行：左侧 chip（或任意节点）+ 右侧相对时间。"""
+        content = [left_node]
+        if time_text:
+            content.append({
+                "component": "span",
+                "props": {"class": "text-caption text-medium-emphasis"},
+                "text": time_text,
+            })
+        return {
+            "component": "div",
+            "props": {"class": "d-flex align-center justify-space-between mb-1"},
+            "content": content,
+        }
+
+    @staticmethod
+    def _outlined_card(body: List[Dict[str, Any]], color: str = "") -> Dict[str, Any]:
+        """统一的 outlined 卡壳；color 非空时整卡着色（如失败标红）。"""
+        props = {"variant": "outlined", "class": "pa-2 mb-2"}
+        if color:
+            props["color"] = color
+        return {"component": "VCard", "props": props, "content": body}
+
+    @staticmethod
+    def _caption(text: str, extra_class: str = "") -> Dict[str, Any]:
+        cls = "text-caption text-medium-emphasis"
+        if extra_class:
+            cls = f"{cls} {extra_class}"
+        return {"component": "div", "props": {"class": cls}, "text": text}
+
+    @staticmethod
+    def _cards_or_empty(cards: List[Dict[str, Any]], empty_text: str) -> Dict[str, Any]:
+        if not cards:
+            return {"component": "VAlert", "props": {"type": "info", "variant": "tonal", "text": empty_text}}
+        return {"component": "div", "content": cards}
+
+    @classmethod
+    def _record_cards(cls, items: List[Dict[str, Any]], empty_text: str = "暂无数据") -> Dict[str, Any]:
+        """手机端历史/明细卡片流：每条一张 VCard。仅在 d-sm-none 容器内使用。"""
+        cards = []
+        for item in items:
+            status = str(item.get("status") or "")
+            body = [
+                cls._card_top_row(cls._status_chip(status), cls._relative_time(item.get("time") or "")),
+                {"component": "div", "props": {"class": "text-body-2 font-weight-medium"},
+                 "text": item.get("source_name") or ""},
+            ]
+            target_line = " / ".join(x for x in (item.get("target_category"), item.get("target_name")) if x)
+            if target_line:
+                body.append(cls._caption(f"→ {target_line}"))
+            if status.lower() == "failed" and item.get("error"):
+                body.append(cls._caption(item.get("error"), extra_class="text-error mt-1"))
+            cards.append(cls._outlined_card(body))
+        return cls._cards_or_empty(cards, empty_text)
+
+    @classmethod
+    def _run_cards(cls, items: List[Dict[str, Any]], empty_text: str = "暂无数据") -> Dict[str, Any]:
+        """手机端执行批次卡片流。"""
+        cards = []
+        for item in items:
+            failed = cls._safe_int(item.get("failed"), 0)
+            body = [
+                cls._card_top_row(cls._kv_chip("来源", item.get("source") or "manual", "info"),
+                                  cls._relative_time(item.get("time") or "")),
+                {"component": "div", "props": {"class": "text-body-2"},
+                 "text": f"成功 {cls._safe_int(item.get('success'), 0)} · 失败 {failed} · "
+                         f"跳过 {cls._safe_int(item.get('skipped'), 0)}（共 {cls._safe_int(item.get('total'), 0)}）"},
+                cls._caption(f"Plex刷新 {cls._safe_int(item.get('plex_refresh_count'), 0)} · "
+                             f"清理空目录 {cls._safe_int(item.get('cleaned_empty_dirs'), 0)}"),
+            ]
+            cards.append(cls._outlined_card(body, color="error" if failed else ""))
+        return cls._cards_or_empty(cards, empty_text)
+
+    @classmethod
+    def _plan_cards(cls, items: List[Dict[str, Any]], empty_text: str = "暂无数据") -> Dict[str, Any]:
+        """手机端整理计划卡片流。"""
+        cards = []
+        for item in items:
+            status = str(item.get("status") or "")
+            body = [
+                cls._card_top_row(cls._status_chip(status)),
+                {"component": "div", "props": {"class": "text-body-2 font-weight-medium"},
+                 "text": item.get("source_name") or ""},
+            ]
+            target_line = " / ".join(x for x in (item.get("target_category"), item.get("target_path")) if x)
+            if target_line:
+                body.append(cls._caption(f"→ {target_line}"))
+            if item.get("warnings_text"):
+                body.append(cls._caption(item.get("warnings_text"), extra_class="text-warning mt-1"))
+            cards.append(cls._outlined_card(body))
+        return cls._cards_or_empty(cards, empty_text)
+
+    @classmethod
+    def _error_cards(cls, rows: List[List[Any]], empty_text: str = "暂无失败项") -> Dict[str, Any]:
+        """手机端失败项卡片流：rows = [[source, error], ...]。"""
+        cards = []
+        for row in rows:
+            source, error = (list(row) + ["", ""])[:2]
+            body = [
+                {"component": "div", "props": {"class": "text-body-2 font-weight-medium"},
+                 "text": str(source or "-")},
+                cls._caption(str(error or ""), extra_class="text-error mt-1"),
+            ]
+            cards.append(cls._outlined_card(body, color="error"))
+        return cls._cards_or_empty(cards, empty_text)
+
+    @classmethod
+    def _mapping_cards(cls, rows: List[List[Any]], empty_text: str = "暂无来源映射") -> Dict[str, Any]:
+        """手机端来源映射卡片：rows = [[name, media_type, source_path, target_root_path], ...]。"""
+        cards = []
+        for row in rows:
+            name, mtype, src, dst = (list(row) + ["", "", "", ""])[:4]
+            cards.append(cls._outlined_card([
+                {"component": "div", "props": {"class": "text-body-2 font-weight-medium"},
+                 "text": f"{name or '-'}（{mtype or '-'}）"},
+                cls._caption(f"来源：{src or '-'}"),
+                cls._caption(f"目标：{dst or '-'}"),
+            ]))
+        return cls._cards_or_empty(cards, empty_text)
+
+    @classmethod
+    def _status_block(cls, p115_status: str, p115_ok: bool, dry_run: bool,
                       source_count: int, last_run_time: str,
                       health: Dict[str, Any] = None,
-                      dep_install: Dict[str, Any] = None) -> Dict[str, Any]:
-        parts = [
-            f"p115client：{p115_status}",
-            f"dry_run：{'是' if dry_run else '否'}",
-            f"来源映射：{source_count} 个",
-        ]
-        if last_run_time:
-            parts.append(f"上次执行：{last_run_time}")
+                      dep_install: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """状态区：一行可扫读的 VChip + 仅在异常时额外生成的醒目 error VAlert。
+        返回节点列表（调用处 splat 进 content）。"""
         cookie_ok = bool((health or {}).get("ok")) if health is not None else p115_ok
+        chips = [
+            cls._kv_chip("p115client", p115_status, "success" if p115_ok else "error"),
+            cls._kv_chip("dry_run", "开" if dry_run else "关", "info" if dry_run else "secondary"),
+            cls._kv_chip("来源", f"{source_count} 个", "secondary"),
+        ]
         if health is not None:
-            cookie_msg = health.get("message") or ("Cookie 正常" if cookie_ok else "Cookie 未知")
-            checked_at = health.get("checked_at") or ""
-            parts.append(
-                f"Cookie：{'✓ ' + cookie_msg if cookie_ok else '✗ ' + cookie_msg}"
-                + (f"（{checked_at}）" if checked_at else "")
-            )
-        # 依赖修复状态：仅在进行中 / 失败时展示（成功后 p115client 可用即隐含成功）
+            chips.append(cls._kv_chip("Cookie", "✓" if cookie_ok else "✗",
+                                      "success" if cookie_ok else "error"))
+        if last_run_time:
+            chips.append(cls._kv_chip("上次", cls._relative_time(last_run_time), "secondary"))
         dep_state = (dep_install or {}).get("state")
         if dep_state in ("running", "failed"):
-            label = {"running": "进行中", "failed": "失败"}[dep_state]
-            dep_msg = (dep_install or {}).get("message") or ""
-            dep_time = (dep_install or {}).get("time") or ""
-            parts.append(
-                f"依赖修复：{label}"
-                + (f" {dep_msg}" if dep_msg else "")
-                + (f"（{dep_time}）" if dep_time else "")
-            )
-        return {
-            "component": "VAlert",
-            "props": {
-                "type": "success" if (p115_ok and cookie_ok) else ("warning" if p115_ok else "error"),
-                "variant": "tonal",
-                "density": "compact",
-                "class": "mb-3",
-                "text": "  ·  ".join(parts),
-            },
-        }
+            chips.append(cls._kv_chip("依赖修复",
+                                      {"running": "进行中", "failed": "失败"}[dep_state],
+                                      "info" if dep_state == "running" else "error"))
+
+        nodes = [{
+            "component": "div",
+            "props": {"class": "d-flex flex-wrap align-center mb-3"},
+            "content": chips,
+        }]
+
+        # 异常专用 VAlert：仅在 p115 不可用 / Cookie 失效 / 依赖修复失败时生成
+        alert_msg = None
+        if not p115_ok:
+            alert_msg = f"p115client 不可用：{p115_status}。请点「修复依赖」一键重装，或在容器内 pip 安装后重启。"
+        elif not cookie_ok:
+            cookie_msg = (health or {}).get("message") or "Cookie 异常"
+            alert_msg = f"115 Cookie 异常：{cookie_msg}。请更新 cookie 后点「检查 Cookie」确认。"
+        elif dep_state == "failed":
+            alert_msg = f"依赖修复失败：{(dep_install or {}).get('message') or ''}"
+        if alert_msg:
+            nodes.append({
+                "component": "VAlert",
+                "props": {"type": "error", "variant": "tonal", "density": "compact",
+                          "class": "mb-3", "text": alert_msg},
+            })
+        return nodes

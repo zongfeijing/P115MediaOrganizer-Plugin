@@ -130,6 +130,8 @@ The plugin details page shows:
 - full paginated history page linked from the details page
 - cleaned empty source directory count
 
+The page is mobile-aware: on narrow screens the history / batch / config tables switch to a card list (so long filenames no longer overflow horizontally), the header actions become a 2×2 button grid, and the status line is a row of scannable chips. When the last run had failures, the 失败项 panel is pinned to the top and expanded automatically.
+
 ## Anti-Throttling
 
 The plugin paces and retries 115 API calls to reduce the chance of being rate-limited or flagged. All settings live under the "反封锁" tab in the plugin form.
