@@ -1,5 +1,6 @@
 import json
 import random
+import threading
 import time
 import traceback
 from datetime import datetime, timedelta
@@ -62,7 +63,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "0.4.0"
+    plugin_version = "0.4.2"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -103,6 +104,8 @@ class P115MediaOrganizer(_PluginBase):
     _run_page_size = 10
     _scheduler = None
     _ops_instance = None
+    _dep_installing = False
+    _dep_install_lock = threading.Lock()
 
     def init_plugin(self, config: dict = None):
         self.stop_service()
@@ -188,6 +191,7 @@ class P115MediaOrganizer(_PluginBase):
             {"path": "/resolve_path", "endpoint": self.resolve_path_api, "methods": ["POST"], "auth": "bear", "summary": "解析115路径"},
             {"path": "/list_dir", "endpoint": self.list_dir_api, "methods": ["POST"], "auth": "bear", "summary": "列出115目录"},
             {"path": "/cookie_check", "endpoint": self.cookie_check_api, "methods": ["POST", "GET"], "auth": "bear", "summary": "检查115 Cookie健康状态"},
+            {"path": "/install_dependency", "endpoint": self.install_dependency_api, "methods": ["POST"], "auth": "bear", "summary": "一键修复p115client依赖"},
         ]
 
     def get_service(self) -> List[Dict[str, Any]]:
@@ -289,6 +293,7 @@ class P115MediaOrganizer(_PluginBase):
         p115_ok = bool(p115.available)
         p115_status = "可用" if p115_ok else (p115.import_error or "不可用")
         health = p115.health_check(force=False) if p115_ok else {"ok": False, "message": p115_status, "checked_at": ""}
+        dep_install = self.get_data("_dep_install") or None
 
         sources = self._source_mapping_list()
         last_run_time = ""
@@ -419,18 +424,29 @@ class P115MediaOrganizer(_PluginBase):
             {"label": "清理空目录", "value": cleaned_count, "color": "secondary"},
         ]
 
+        header_buttons = [
+            self._action_button("重新生成计划", "dry_run_all", "post", "primary", "mdi-refresh"),
+            self._action_button("检查 Cookie", "cookie_check", "post", "info", "mdi-shield-key",
+                                variant="outlined"),
+            self._action_button("执行计划", "execute_last_plan", "post", "error", "mdi-play",
+                                variant="outlined"),
+        ]
+        # p115client 不可用时把「修复依赖」做成醒目按钮；可用时仍保留一个低调入口供强制重装
+        header_buttons.append(
+            self._action_button(
+                "修复依赖", "install_dependency", "post",
+                "warning" if not p115_ok else "secondary",
+                "mdi-package-down",
+                variant="tonal" if not p115_ok else "outlined",
+            )
+        )
         header = {
             "component": "div",
             "props": {"class": "d-flex align-center flex-wrap mb-3"},
             "content": [
                 {"component": "h2", "props": {"class": "text-h6 ma-0"}, "text": "115云端媒体整理"},
                 {"component": "VSpacer"},
-                self._action_button("重新生成计划", "dry_run_all", "post", "primary", "mdi-refresh"),
-                self._action_button("检查 Cookie", "cookie_check", "post", "info", "mdi-shield-key",
-                                    variant="outlined"),
-                self._action_button("执行计划", "execute_last_plan", "post", "error", "mdi-play",
-                                    variant="outlined"),
-            ],
+            ] + header_buttons,
         }
 
         runs_truncated_hint = {
@@ -487,7 +503,7 @@ class P115MediaOrganizer(_PluginBase):
             "component": "VContainer",
             "content": [
                 header,
-                self._status_strip(p115_status, p115_ok, self._dry_run, len(sources), last_run_time, health),
+                self._status_strip(p115_status, p115_ok, self._dry_run, len(sources), last_run_time, health, dep_install),
                 self._metric_row(metrics),
                 panels,
             ],
@@ -705,6 +721,56 @@ class P115MediaOrganizer(_PluginBase):
         p115 = self._p115_ops()
         result = p115.health_check(force=force)
         return schemas.Response(success=bool(result.get("ok")), message=result.get("message"), data=result)
+
+    def install_dependency_api(self, data: dict = None):
+        """一键修复 p115client 依赖：后台线程调用 MoviePilot 的依赖安装器（复用其 pip 镜像/
+        wheel 目录/降级策略），立即返回，避免阻塞前端请求。状态写入 plugin data 供状态条展示。
+        """
+        # 原子地 check-and-set，避免并发/双击同时通过检查后 spawn 多个 pip 安装
+        with self._dep_install_lock:
+            if self._dep_installing:
+                return schemas.Response(success=True, message="依赖修复正在进行中，请稍候")
+            self._dep_installing = True
+        self.save_data("_dep_install", {
+            "state": "running",
+            "message": "正在安装 p115client，约 1-2 分钟…",
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+
+        def _worker():
+            ok, msg = False, ""
+            try:
+                from app.helper.plugin import PluginHelper
+                logger.info("【115云端媒体整理】开始修复依赖：p115client>=0.0.8")
+                ok, msg = PluginHelper().install_dependencies(["p115client>=0.0.8"])
+            except Exception as err:
+                ok, msg = False, str(err)
+                logger.error(f"【115云端媒体整理】依赖修复异常：{err}")
+            finally:
+                if ok:
+                    # 让下次 _p115_ops() 重建实例并重新 import 已装好的 p115client
+                    self._ops_instance = None
+                    try:
+                        import importlib
+                        importlib.invalidate_caches()
+                    except Exception:
+                        pass
+                    logger.info("【115云端媒体整理】依赖修复完成")
+                else:
+                    logger.warning(f"【115云端媒体整理】依赖修复失败：{msg}")
+                self.save_data("_dep_install", {
+                    "state": "success" if ok else "failed",
+                    "message": (msg or ("安装成功" if ok else "安装失败"))[:300],
+                    "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                })
+                with self._dep_install_lock:
+                    self._dep_installing = False
+
+        threading.Thread(target=_worker, name="p115-dep-install", daemon=True).start()
+        return schemas.Response(
+            success=True,
+            message="依赖修复已在后台开始，约 1-2 分钟后刷新页面或点「检查 Cookie」确认",
+        )
 
     def auto_run(self):
         logger.info(f"【115云端媒体整理】自动运行开始：dry_run={self._dry_run}")
@@ -1712,7 +1778,8 @@ class P115MediaOrganizer(_PluginBase):
     @staticmethod
     def _status_strip(p115_status: str, p115_ok: bool, dry_run: bool,
                       source_count: int, last_run_time: str,
-                      health: Dict[str, Any] = None) -> Dict[str, Any]:
+                      health: Dict[str, Any] = None,
+                      dep_install: Dict[str, Any] = None) -> Dict[str, Any]:
         parts = [
             f"p115client：{p115_status}",
             f"dry_run：{'是' if dry_run else '否'}",
@@ -1727,6 +1794,17 @@ class P115MediaOrganizer(_PluginBase):
             parts.append(
                 f"Cookie：{'✓ ' + cookie_msg if cookie_ok else '✗ ' + cookie_msg}"
                 + (f"（{checked_at}）" if checked_at else "")
+            )
+        # 依赖修复状态：仅在进行中 / 失败时展示（成功后 p115client 可用即隐含成功）
+        dep_state = (dep_install or {}).get("state")
+        if dep_state in ("running", "failed"):
+            label = {"running": "进行中", "failed": "失败"}[dep_state]
+            dep_msg = (dep_install or {}).get("message") or ""
+            dep_time = (dep_install or {}).get("time") or ""
+            parts.append(
+                f"依赖修复：{label}"
+                + (f" {dep_msg}" if dep_msg else "")
+                + (f"（{dep_time}）" if dep_time else "")
             )
         return {
             "component": "VAlert",
