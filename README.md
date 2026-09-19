@@ -1,6 +1,6 @@
 # P115MediaOrganizer
 
-MoviePilot V2 plugin for organizing media files directly inside 115 cloud drive.
+MoviePilot V2/V3 plugin for organizing media files directly inside 115 cloud drive.
 
 This plugin scans configured 115 source folders, uses MoviePilot recognition and category rules, then moves/renames files in 115 to the matching media library folders. It does not download files and does not create STRM files.
 
@@ -12,33 +12,18 @@ Use this repository URL as a third-party plugin market/source in MoviePilot, the
 https://github.com/zongfeijing/P115MediaOrganizer-Plugin
 ```
 
-The V2 plugin index is `package.v2.json`, and the plugin code is under:
-
-```text
-plugins.v2/p115mediaorganizer
-```
+MoviePilot V2 uses `package.v2.json` and `plugins.v2/p115mediaorganizer`. MoviePilot V3 uses `package.v3.json` and `plugins.v3/p115mediaorganizer`.
 
 ## Configuration
 
 ### 115 Connection
 
-The plugin uses `p115client`. MoviePilot installs plugin dependencies automatically from `requirements.txt` on startup, so you normally do not need to install it by hand.
+MoviePilot installs `p115client` from the plugin dependency manifest:
 
-**Why the dependency can disappear after a MoviePilot update**: the Python venv lives inside the Docker image, not in the mounted `/config` volume. Pulling a new image and recreating the container resets the venv, so any runtime-installed package (including `p115client`) is gone until reinstalled. MoviePilot re-installs plugin requirements on the next startup, but that can fail silently if PyPI is slow or unreachable.
+- V2: `plugins.v2/p115mediaorganizer/requirements.txt`
+- V3: `plugins.v3/p115mediaorganizer/pyproject.toml`
 
-Three ways to deal with it, from least to most effort:
-
-1. **One-click「修复依赖」button** (recommended for quick recovery) — the plugin detail page has a 修复依赖 button. When `p115client` is unavailable it turns into a highlighted warning button. Clicking it runs MoviePilot's own dependency installer in the background (reusing the configured PIP mirror, local wheel dirs, and downgrade fallback) and reports progress in the status strip. No restart needed; click 检查 Cookie afterward to confirm.
-2. **Set a PIP mirror** so MoviePilot's startup auto-install succeeds reliably (best long-term fix, no manual steps after each update). Add an env var to the container, e.g. `PIP_PROXY=https://pypi.tuna.tsinghua.edu.cn/simple`.
-3. **Bake it into a custom image** so it never disappears:
-   ```dockerfile
-   FROM jxxghp/moviepilot-v2:latest
-   RUN pip install 'p115client>=0.0.8'
-   ```
-
-Manual fallback if needed: `pip install 'p115client>=0.0.8'` inside the container, then restart.
-
-The old behavior of running `pip install` from inside every 115 request was removed — it could block the API call for up to two minutes. The 修复依赖 button replaces it with a deliberate, non-blocking, user-triggered install.
+If dependency installation fails, configure a reliable `PIP_PROXY`, then reinstall or update the plugin from MoviePilot. The V3 implementation intentionally does not run pip from plugin code.
 
 Cookie options:
 
