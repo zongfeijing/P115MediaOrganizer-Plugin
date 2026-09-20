@@ -114,3 +114,10 @@ def resolve_target_cids_for_source(
         except Exception as err:
             errors.append(f"{target_path}：{err}")
     return resolved, errors
+
+
+def source_contains_target(source_path: str, target_path: str) -> bool:
+    """判断目标目录是否等于来源目录或位于来源目录内部。"""
+    source_parts = tuple(part for part in source_path.strip("/").split("/") if part)
+    target_parts = tuple(part for part in target_path.strip("/").split("/") if part)
+    return bool(source_parts) and target_parts[:len(source_parts)] == source_parts

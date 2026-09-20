@@ -36,6 +36,19 @@ category_mapper = load_module("category_mapper")
 planner_module = load_module("planner")
 execution_module = load_module("execution")
 
+_app_module = sys.modules.setdefault("app", types.ModuleType("app"))
+_app_module.__path__ = getattr(_app_module, "__path__", [])
+_sdk_module = sys.modules.setdefault("app.sdk", types.ModuleType("app.sdk"))
+_sdk_module.__path__ = getattr(_sdk_module, "__path__", [])
+_logging_module = types.ModuleType("app.sdk.logging")
+_logging_module.logger = SimpleNamespace(
+    info=lambda *_args, **_kwargs: None,
+    warning=lambda *_args, **_kwargs: None,
+    error=lambda *_args, **_kwargs: None,
+)
+sys.modules.setdefault("app.sdk.logging", _logging_module)
+p115_ops_module = load_module("p115_ops")
+
 
 class MediaSource(Enum):
     TMDB = "tmdb"
@@ -46,7 +59,7 @@ class V3ContractTest(unittest.TestCase):
         v2 = json.loads((ROOT / "package.v2.json").read_text())
         v3 = json.loads((ROOT / "package.v3.json").read_text())
         self.assertIs(v2["P115MediaOrganizer"]["v3"], False)
-        self.assertEqual(v3["P115MediaOrganizer"]["version"], "1.0.1")
+        self.assertEqual(v3["P115MediaOrganizer"]["version"], "1.2.0")
         self.assertEqual(v3["P115MediaOrganizer"]["system_version"], ">=3.0.0")
 
     def test_v3_code_does_not_import_legacy_or_internal_host_paths(self):
@@ -129,6 +142,39 @@ class V3ContractTest(unittest.TestCase):
         self.assertEqual(first["movie"]["外语电影"], "cid:/库A/外语电影")
         self.assertEqual(second["movie"]["外语电影"], "cid:/库B/外语电影")
 
+    def test_streaming_scan_stops_before_loading_later_pages(self):
+        calls = []
+
+        class Client:
+            @staticmethod
+            def fs_files(payload):
+                calls.append(payload["offset"])
+                start = payload["offset"]
+                return {"data": [
+                    {"fid": str(start + 1), "n": f"movie-{start + 1}.mkv", "s": 1024},
+                    {"fid": str(start + 2), "n": f"movie-{start + 2}.mkv", "s": 1024},
+                ]}
+
+        ops = object.__new__(p115_ops_module.P115Ops)
+        ops.client = Client()
+        ops.import_error = ""
+        ops.list_page_size = 2
+        ops._last_call_ts = 0.0
+        ops.min_interval = 0.0
+        ops.jitter_ratio = 0.0
+        ops.max_retries = 0
+        ops.retry_base = 0.1
+        ops._cookie_alive = None
+        items = ops.walk_media_items("0", "/in", 1, max_items=1)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(calls, [0])
+
+    def test_target_must_not_be_inside_source_tree(self):
+        self.assertTrue(execution_module.source_contains_target("/incoming", "/incoming/library"))
+        self.assertTrue(execution_module.source_contains_target("/incoming", "/incoming"))
+        self.assertFalse(execution_module.source_contains_target("/incoming", "/library"))
+        self.assertFalse(execution_module.source_contains_target("/incoming/a", "/incoming/ab"))
+
     def test_category_prefers_v3_library_category(self):
         mapper = category_mapper.CategoryMapper()
         media = SimpleNamespace(library_category="欧美剧", category="旧分类")
@@ -190,6 +236,31 @@ class V3ContractTest(unittest.TestCase):
                     sys.modules.pop(name, None)
                 else:
                     sys.modules[name] = previous
+
+    def test_custom_v3_category_uses_dynamic_target_resolver(self):
+        calls = []
+        planner = planner_module.Planner(
+            category_mapper=category_mapper.CategoryMapper(),
+            target_cids={"movie": {}, "tv": {}},
+            target_resolver=lambda media_type, category: calls.append((media_type, category)) or "cid-doc",
+        )
+        media = SimpleNamespace(
+            title="Documentary",
+            year=2026,
+            media_source=MediaSource.TMDB,
+            media_id="88",
+            library_category="纪录片",
+            category="纪录片",
+        )
+        meta = SimpleNamespace(begin_season=None, begin_episode=None)
+        planner._recognize = lambda *_args, **_kwargs: (media, meta)
+        planner._media_identity = lambda _media: ("tmdb", "88")
+        planner._moviepilot_rename_path = lambda *_args, **_kwargs: "Documentary (2026)/Documentary.mkv"
+        item = models.MediaItem("f1", None, "Documentary.mkv", ".mkv", 100, False, "p1", "/in/Documentary.mkv")
+        plans = planner.build_plans("movie", [item], {}, [])
+        self.assertEqual(calls, [("movie", "纪录片")])
+        self.assertEqual(plans[0]["target_parent_cid"], "cid-doc")
+        self.assertEqual(plans[0]["status"], "planned")
 
     def test_plan_persists_v3_media_identity(self):
         planner = planner_module.Planner(

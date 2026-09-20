@@ -21,10 +21,12 @@ from app.sdk.plugin import _PluginBase
 from app.schemas import RefreshMediaItem
 from app.schemas.types import MediaType, MessageType
 
+from .api_models import ListDirectoryRequest, ResolvePathRequest, TriggerRequest
 from .category_mapper import DEFAULT_CATEGORY_MAPPING, CategoryMapper
 from .execution import (
     executable_plan_items,
     resolve_target_cids_for_source,
+    source_contains_target,
     source_entry_matches_plan,
     validate_plan,
 )
@@ -69,7 +71,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "1.0.1"
+    plugin_version = "1.2.0"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -83,6 +85,7 @@ class P115MediaOrganizer(_PluginBase):
     _dry_run = True
     _delete_empty_source_dirs = True
     _refresh_plex_after_execute = True
+    _allow_external_execute = False
     _plex_mediaservers = []
     _max_depth = 5
     _max_items_per_run = 200
@@ -135,6 +138,7 @@ class P115MediaOrganizer(_PluginBase):
         self._dry_run = bool(config.get("dry_run", True))
         self._delete_empty_source_dirs = bool(config.get("delete_empty_source_dirs", True))
         self._refresh_plex_after_execute = self._safe_bool(config.get("refresh_plex_after_execute"), True)
+        self._allow_external_execute = self._safe_bool(config.get("allow_external_execute"), False)
         self._plex_mediaservers = config.get("plex_mediaservers") or []
         self._max_depth = self._safe_int(config.get("max_depth"), 5)
         self._max_items_per_run = self._safe_int(config.get("max_items_per_run"), 200)
@@ -239,6 +243,7 @@ class P115MediaOrganizer(_PluginBase):
             self._row([
                 self._col(self._switch("delete_empty_source_dirs", "删除空源目录"), 4),
                 self._col(self._switch("refresh_plex_after_execute", "整理后刷新Plex"), 4),
+                self._col(self._switch("allow_external_execute", "允许 API Key 外部执行"), 4),
             ]),
             self._row([
                 self._col(self._mediaserver_select("plex_mediaservers", "Plex媒体服务器"), 12),
@@ -267,7 +272,12 @@ class P115MediaOrganizer(_PluginBase):
                 self._col(self._text("cookie_path", "115 Cookie文件路径"), 12),
             ]),
             self._row([
-                self._col(self._textarea("cookie_text", "115 Cookie文本（文件不可用时兜底）", rows=3), 12),
+                self._col(self._text(
+                    "cookie_text",
+                    "115 Cookie文本（文件不可用时兜底）",
+                    type="password",
+                    autocomplete="off",
+                ), 12),
             ]),
         ]
         dir_content = [
@@ -614,21 +624,31 @@ class P115MediaOrganizer(_PluginBase):
         sources = self._source_mapping_list()
         logger.info(f"【115云端媒体整理】开始 dry-run：来源 {len(sources)} 个")
         plan = []
+        remaining = max(0, self._max_items_per_run)
         for source in sources:
-            response = self._dry_run_source(source, save=False)
+            if self._max_items_per_run > 0 and remaining <= 0:
+                break
+            response = self._dry_run_source(
+                source,
+                save=False,
+                max_items=remaining if self._max_items_per_run > 0 else 0,
+            )
             if not response.success:
                 return response
-            plan.extend(response.data or [])
+            source_plan = response.data or []
+            plan.extend(source_plan)
+            if self._max_items_per_run > 0:
+                remaining -= len(source_plan)
         self.save_data("last_plan", plan)
         logger.info(f"【115云端媒体整理】dry-run 完成：计划 {len(plan)} 条")
         return schemas.Response(success=True, message=f"已生成整理计划：{len(plan)} 条", data=plan)
 
 
-    def trigger_api(self, data: dict = None):
+    def trigger_api(self, data: TriggerRequest = None):
         return self._run_exclusive("external_trigger", lambda: self._trigger_api(data))
 
-    def _trigger_api(self, data: dict = None):
-        data = data or {}
+    def _trigger_api(self, data: TriggerRequest = None):
+        data = data.model_dump() if isinstance(data, TriggerRequest) else (data or {})
         source = str(data.get("source") or "external").strip()
         execute = self._safe_bool(data.get("execute"), default=not self._dry_run)
         force_execute = self._safe_bool(data.get("force_execute"), default=False)
@@ -652,6 +672,12 @@ class P115MediaOrganizer(_PluginBase):
 
         if not execute:
             return schemas.Response(success=True, message=f"已触发 dry-run：{len(plan)} 条计划", data=result)
+        if not self._allow_external_execute:
+            return schemas.Response(
+                success=False,
+                message="外部执行未启用；本次仅生成计划，请由管理员在插件页面确认执行",
+                data=result,
+            )
         if self._dry_run and not force_execute:
             return schemas.Response(success=True, message=f"当前 dry_run=true，仅生成计划：{len(plan)} 条", data=result)
         if not plan:
@@ -715,7 +741,7 @@ class P115MediaOrganizer(_PluginBase):
 
         cleaned_dirs = []
         if self._delete_empty_source_dirs:
-            cleaned_dirs = self._cleanup_empty_source_dirs(p115)
+            cleaned_dirs = self._cleanup_empty_source_dirs(p115, success_items)
             result_dict = result.to_dict()
             result_dict["cleaned_empty_dirs"] = cleaned_dirs
         else:
@@ -772,8 +798,8 @@ class P115MediaOrganizer(_PluginBase):
         self.save_data("runs", [])
         return schemas.Response(success=True, message="历史已清空")
 
-    def resolve_path_api(self, data: dict = None):
-        path = str((data or {}).get("path") or "").strip()
+    def resolve_path_api(self, data: ResolvePathRequest):
+        path = str(data.path or "").strip()
         if not path:
             return schemas.Response(success=False, message="path不能为空")
         p115 = self._p115_ops()
@@ -784,9 +810,9 @@ class P115MediaOrganizer(_PluginBase):
         except Exception as err:
             return schemas.Response(success=False, message=str(err))
 
-    def list_dir_api(self, data: dict = None):
-        path = str((data or {}).get("path") or "").strip()
-        cid = str((data or {}).get("cid") or "").strip()
+    def list_dir_api(self, data: ListDirectoryRequest):
+        path = str(data.path or "").strip()
+        cid = str(data.cid or "").strip()
         p115 = self._p115_ops()
         if not p115.available:
             return schemas.Response(success=False, message=p115.import_error or "p115client不可用")
@@ -829,19 +855,34 @@ class P115MediaOrganizer(_PluginBase):
     def _dry_run_for(self, media_type: str, save: bool = True):
         logger.info(f"【115云端媒体整理】开始 {media_type} dry-run")
         plan = []
+        remaining = max(0, self._max_items_per_run)
         for source in self._source_mapping_list():
             if source.get("media_type") != media_type:
                 continue
-            response = self._dry_run_source(source, save=False)
+            if self._max_items_per_run > 0 and remaining <= 0:
+                break
+            response = self._dry_run_source(
+                source,
+                save=False,
+                max_items=remaining if self._max_items_per_run > 0 else 0,
+            )
             if not response.success:
                 return response
-            plan.extend(response.data or [])
+            source_plan = response.data or []
+            plan.extend(source_plan)
+            if self._max_items_per_run > 0:
+                remaining -= len(source_plan)
         if save:
             self.save_data("last_plan", plan)
         logger.info(f"【115云端媒体整理】{media_type} dry-run 完成：计划 {len(plan)} 条")
         return schemas.Response(success=True, message=f"已生成{media_type}整理计划：{len(plan)} 条", data=plan)
 
-    def _dry_run_source(self, source: Dict[str, Any], save: bool = True):
+    def _dry_run_source(
+        self,
+        source: Dict[str, Any],
+        save: bool = True,
+        max_items: Optional[int] = None,
+    ):
         try:
             p115 = self._p115_ops()
             if not p115.available:
@@ -850,6 +891,12 @@ class P115MediaOrganizer(_PluginBase):
             media_type = str(source.get("media_type") or "").lower()
             source_cid = str(source.get("source_cid") or "")
             source_path = str(source.get("source_path") or source_cid)
+            target_root_path = str(source.get("target_root_path") or "")
+            if source_contains_target(source_path, target_root_path):
+                return schemas.Response(
+                    success=False,
+                    message=f"目标目录不能等于或位于来源目录内部：{source_path} -> {target_root_path}",
+                )
             logger.info(f"【115云端媒体整理】开始扫描来源：类型={media_type}，路径={source_path}")
             if not source_cid and source_path:
                 source_cid = p115.resolve_path(source_path)
@@ -864,11 +911,16 @@ class P115MediaOrganizer(_PluginBase):
                 max_depth=max(0, self._max_depth),
                 min_file_size=max(0, self._min_file_size_mb) * 1024 * 1024,
                 exclude_keywords=self._exclude_list(),
-                max_items=max(0, self._max_items_per_run),
+                max_items=max(0, self._max_items_per_run if max_items is None else max_items),
             )
             logger.info(f"【115云端媒体整理】来源扫描完成：{source_path}，候选视频 {len(items)} 个")
             mapper = CategoryMapper(self._category_mapping_dict())
-            planner = Planner(mapper, target_cids)
+            target_resolver = self._target_resolver_for_source(
+                source=source,
+                target_cids=target_cids,
+                p115=p115,
+            )
+            planner = Planner(mapper, target_cids, target_resolver=target_resolver)
             plan = planner.build_plans(
                 media_type,
                 items,
@@ -929,6 +981,28 @@ class P115MediaOrganizer(_PluginBase):
             logger.warning(f"【115云端媒体整理】目标分类路径解析失败：{error}")
         return resolved
 
+
+    @staticmethod
+    def _target_resolver_for_source(
+        source: Dict[str, Any],
+        target_cids: Dict[str, Any],
+        p115: P115Ops,
+    ):
+        """按需解析 V3 分类路径，使自定义分类无需预先写入 target_cids。"""
+        target_root = str(source.get("target_root_path") or "").rstrip("/")
+        cache: Dict[str, str] = {}
+
+        def resolve(media_type: str, category: str) -> str:
+            configured = str(target_cids.get(media_type, {}).get(category) or "")
+            if configured:
+                return configured
+            key = f"{media_type}:{category}"
+            if key not in cache:
+                cache[key] = p115.resolve_path(f"{target_root}/{category}")
+            target_cids.setdefault(media_type, {})[category] = cache[key]
+            return cache[key]
+
+        return resolve
 
     def _category_mapping_dict(self) -> Dict[str, Dict[str, str]]:
         try:
@@ -1261,20 +1335,18 @@ class P115MediaOrganizer(_PluginBase):
                 return candidate
             counter += 1
 
-    def _cleanup_empty_source_dirs(self, p115: P115Ops) -> List[str]:
+    def _cleanup_empty_source_dirs(
+        self,
+        p115: P115Ops,
+        success_items: List[Dict[str, Any]],
+    ) -> List[str]:
+        """只清理本轮成功移动所涉及的来源根，避免触碰无关来源目录。"""
         cleaned = []
-        source_roots = set()
-        for source in self._source_mapping_list():
-            source_cid = source.get("source_cid")
-            source_path = source.get("source_path")
-            if not source_cid and source_path:
-                try:
-                    source_cid = p115.resolve_path(source_path)
-                except Exception as err:
-                    logger.warning(f"解析115来源路径失败 {source_path}: {err}")
-                    continue
-            if source_cid:
-                source_roots.add(source_cid)
+        source_roots = {
+            str(item.get("source_root_cid"))
+            for item in success_items
+            if item.get("source_root_cid")
+        }
         logger.info(f"【115云端媒体整理】开始清理空来源目录：来源根 {len(source_roots)} 个")
         # 1) 自底向上收集每个 source root 下的所有空目录 cid
         empty_cids_by_root: Dict[str, List[str]] = {}
@@ -1600,6 +1672,7 @@ class P115MediaOrganizer(_PluginBase):
             "dry_run": True,
             "delete_empty_source_dirs": True,
             "refresh_plex_after_execute": True,
+            "allow_external_execute": False,
             "plex_mediaservers": [],
             "max_depth": 5,
             "max_items_per_run": 200,
@@ -1690,8 +1763,11 @@ class P115MediaOrganizer(_PluginBase):
         return {"component": "VSwitch", "props": {"model": model, "label": label}}
 
     @staticmethod
-    def _text(model: str, label: str) -> Dict[str, Any]:
-        return {"component": "VTextField", "props": {"model": model, "label": label}}
+    def _text(model: str, label: str, **props) -> Dict[str, Any]:
+        return {
+            "component": "VTextField",
+            "props": {"model": model, "label": label, **props},
+        }
 
     @staticmethod
     def _select(model: str, label: str, items: List[Dict[str, str]]) -> Dict[str, Any]:

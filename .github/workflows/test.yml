@@ -1,0 +1,21 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  v3-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile plugin
+        run: python -m compileall -q plugins.v2/p115mediaorganizer plugins.v3/p115mediaorganizer
+      - name: Run contract tests
+        run: python -m unittest discover -s tests -v
+      - name: Check whitespace
+        run: git diff --check

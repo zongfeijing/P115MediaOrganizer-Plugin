@@ -314,8 +314,8 @@ class P115Ops:
             raise P115UnavailableError(f"路径不存在或不是目录：{path}")
         return str(cid)
 
-    def list_entries(self, cid: str) -> List[Any]:
-        """分页拉取目录内容并合并，避免单次响应过大或漏数据。"""
+    def iter_entries(self, cid: str):
+        """分页迭代目录内容，让扫描方达到上限后可以立即停止。"""
         client = self.require_client()
         method = None
         for method_name in ("fs_files", "fs_list", "list", "listdir", "iterdir"):
@@ -325,7 +325,6 @@ class P115Ops:
         if not method:
             raise P115UnavailableError("当前p115client未找到可用的目录列表API")
 
-        all_entries: List[Any] = []
         offset = 0
         page_size = self.list_page_size
         used_dict_payload = True
@@ -337,13 +336,11 @@ class P115Ops:
                         f"list_entries({cid}, offset={offset})", method, payload,
                     )
                 else:
-                    # 老版本不支持 dict payload，只能一次性拉取
                     result = self._call(f"list_entries({cid})", method, cid)
             except TypeError:
                 if used_dict_payload:
                     used_dict_payload = False
                     continue
-                # 再退一步：cid=cid 关键字
                 try:
                     result = self._call(f"list_entries({cid})", method, cid=cid)
                 except TypeError:
@@ -351,10 +348,8 @@ class P115Ops:
             page = self._extract_entries(result)
             if not page:
                 break
-            all_entries.extend(page)
-            if not used_dict_payload:
-                break
-            if len(page) < page_size:
+            yield from page
+            if not used_dict_payload or len(page) < page_size:
                 break
             offset += len(page)
             if offset >= 50000:
@@ -362,7 +357,10 @@ class P115Ops:
                     f"【115云端媒体整理】list_entries 超过 50000 条，提前终止：cid={cid}"
                 )
                 break
-        return all_entries
+
+    def list_entries(self, cid: str) -> List[Any]:
+        """完整读取目录内容；需要提前停止的扫描应使用 iter_entries。"""
+        return list(self.iter_entries(cid))
 
     def walk_media_items(
         self,
@@ -381,14 +379,18 @@ class P115Ops:
                 return
             if depth > max_depth:
                 return
-            try:
-                entries = self.list_entries(cid)
-            except P115UnavailableError as err:
-                logger.warning(
-                    f"【115云端媒体整理】列出目录失败，跳过该子树：path={current_path}，原因：{err}"
-                )
-                return
-            for entry in entries:
+            iterator = iter(self.iter_entries(cid))
+            while not max_items or len(items) < max_items:
+                try:
+                    entry = next(iterator)
+                except StopIteration:
+                    break
+                except P115UnavailableError as err:
+                    logger.warning(
+                        f"【115云端媒体整理】列出目录失败，跳过该子树："
+                        f"path={current_path}，原因：{err}"
+                    )
+                    return
                 name = self.entry_name(entry)
                 if not name:
                     continue
@@ -408,8 +410,6 @@ class P115Ops:
                 if any(keyword in path_hint.lower() for keyword in excludes):
                     continue
                 items.append(self._to_media_item(entry, cid, path_hint))
-                if max_items and len(items) >= max_items:
-                    return
 
         walk(source_cid, source_path, 0)
         return items
@@ -444,7 +444,7 @@ class P115Ops:
         raise P115UnavailableError("当前p115client未找到可用的创建目录API")
 
     def find_child(self, parent_cid: str, name: str, folder: Optional[bool] = None) -> Optional[Any]:
-        for entry in self.list_entries(parent_cid):
+        for entry in self.iter_entries(parent_cid):
             if self.entry_name(entry) != name:
                 continue
             if folder is None or self.is_folder(entry) == folder:
@@ -456,7 +456,7 @@ class P115Ops:
         expected = str(entry_id or "")
         if not expected:
             return None
-        for entry in self.list_entries(parent_cid):
+        for entry in self.iter_entries(parent_cid):
             current = self.entry_cid(entry) if self.is_folder(entry) else self.entry_fid(entry)
             if current == expected:
                 return entry

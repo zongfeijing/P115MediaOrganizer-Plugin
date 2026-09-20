@@ -20,7 +20,7 @@ class CategoryMapper:
         self,
         media_type: str,
         mediainfo: Any,
-        target_cids: Dict[str, Dict[str, str]],
+        target_cids: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> Tuple[str, str, str]:
         warnings = []
         source_category = self._get_category(media_type, mediainfo, warnings)
@@ -30,13 +30,6 @@ class CategoryMapper:
         if not source_category:
             warnings.append("MoviePilot分类为空")
         target_category = mapped_category or source_category or fallback
-
-        if target_category not in target_cids.get(media_type, {}):
-            warnings.append(f"目标分类CID不存在：{target_category}")
-            target_category = fallback
-
-        if target_category not in target_cids.get(media_type, {}):
-            warnings.append(f"兜底分类CID不存在：{target_category}")
 
         return source_category or "", target_category, "；".join(warnings)
 

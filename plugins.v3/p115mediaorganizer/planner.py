@@ -6,7 +6,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Iterable, List
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from .category_mapper import CategoryMapper
 from .models import MediaItem, OrganizePlan
@@ -26,9 +26,15 @@ def compute_batch_group_key(plan: Dict[str, Any]) -> str:
 
 
 class Planner:
-    def __init__(self, category_mapper: CategoryMapper, target_cids: Dict[str, Dict[str, str]]):
+    def __init__(
+        self,
+        category_mapper: CategoryMapper,
+        target_cids: Dict[str, Dict[str, str]],
+        target_resolver: Optional[Callable[[str, str], str]] = None,
+    ):
         self.category_mapper = category_mapper
         self.target_cids = target_cids
+        self.target_resolver = target_resolver
 
     def build_plans(
         self,
@@ -63,6 +69,11 @@ class Planner:
                 warnings.extend(category_warning.split("；"))
 
             target_parent = self.target_cids.get(media_type, {}).get(target_category, "")
+            if not target_parent and self.target_resolver and target_category:
+                try:
+                    target_parent = self.target_resolver(media_type, target_category) or ""
+                except Exception as err:
+                    warnings.append(f"目标分类目录解析失败：{err}")
             confidence = "normal" if mediainfo else "unrecognized"
             action = "move"
             status = "planned"
@@ -78,6 +89,11 @@ class Planner:
                     if unrecognized_action == "move_to_unrecognized":
                         warnings.append("未配置未识别目录CID，已跳过")
                 status = "skipped" if action == "skip" else "planned"
+
+            if action == "move" and not target_parent:
+                action = "skip"
+                status = "skipped"
+                warnings.append(f"目标分类目录不存在：{target_category}")
 
             target_dir_name, target_season_dir_name, target_name = self._build_target_names(
                 media_type=media_type,
