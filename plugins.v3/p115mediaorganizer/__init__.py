@@ -1,5 +1,6 @@
 import json
 import random
+import threading
 import time
 import traceback
 from datetime import datetime, timedelta
@@ -21,6 +22,12 @@ from app.schemas import RefreshMediaItem
 from app.schemas.types import MediaType, MessageType
 
 from .category_mapper import DEFAULT_CATEGORY_MAPPING, CategoryMapper
+from .execution import (
+    executable_plan_items,
+    resolve_target_cids_for_source,
+    source_entry_matches_plan,
+    validate_plan,
+)
 from .models import ExecuteResult
 from .p115_ops import ANTI_BLOCK_DEFAULTS, BATCH_RENAME_MAX, P115Ops, P115UnavailableError
 from .planner import Planner, compute_batch_group_key
@@ -62,7 +69,7 @@ class P115MediaOrganizer(_PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.1"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -99,13 +106,26 @@ class P115MediaOrganizer(_PluginBase):
     _run_limit = 100
     _history_page = 1
     _history_page_size = 50
+    _plan_ttl_hours = 24
     _run_page = 1
     _run_page_size = 10
     _scheduler = None
     _ops_instance = None
 
+    def __init__(self):
+        super().__init__()
+        self._scheduler = None
+        self._ops_instance = None
+        self._operation_lock = threading.RLock()
+        self._operation_depth = 0
+        self._active_operation = ""
+
     def init_plugin(self, config: dict = None):
-        self.stop_service()
+        with self._operation_lock:
+            return self._init_plugin(config)
+
+    def _init_plugin(self, config: dict = None):
+        self._stop_service()
         self._ops_instance = None  # 配置可能变了，重置缓存的 P115Ops 单例
         config = config or {}
         self._enabled = bool(config.get("enabled", False))
@@ -138,6 +158,7 @@ class P115MediaOrganizer(_PluginBase):
         self._run_limit = self._safe_int(config.get("run_limit"), 100)
         self._history_page = max(1, self._safe_int(config.get("history_page"), 1))
         self._history_page_size = self._clamp_int(config.get("history_page_size"), 50, 10, 200)
+        self._plan_ttl_hours = self._clamp_int(config.get("plan_ttl_hours"), 24, 1, 720)
         self._run_page = max(1, self._safe_int(config.get("run_page"), 1))
         self._run_page_size = self._clamp_int(config.get("run_page_size"), 10, 5, 100)
         logger.info(
@@ -238,6 +259,7 @@ class P115MediaOrganizer(_PluginBase):
             ]),
             self._row([
                 self._col(self._text("run_limit", "批次保留数量"), 4),
+                self._col(self._text("plan_ttl_hours", "计划有效期（小时）"), 4),
             ]),
         ]
         cookie_content = [
@@ -546,7 +568,30 @@ class P115MediaOrganizer(_PluginBase):
             ],
         }]
 
+    def _run_exclusive(self, operation: str, callback):
+        """串行化扫描和执行，避免 API、定时任务与立即运行互相覆盖状态。"""
+        if not self._operation_lock.acquire(blocking=False):
+            return schemas.Response(
+                success=False,
+                message=f"已有任务正在运行：{self._active_operation or 'unknown'}",
+            )
+        outermost = self._operation_depth == 0
+        self._operation_depth += 1
+        if outermost:
+            self._active_operation = operation
+        try:
+            return callback()
+        finally:
+            self._operation_depth -= 1
+            if outermost:
+                self._active_operation = ""
+            self._operation_lock.release()
+
     def stop_service(self):
+        with self._operation_lock:
+            return self._stop_service()
+
+    def _stop_service(self):
         try:
             if self._scheduler:
                 self._scheduler.remove_all_jobs()
@@ -557,12 +602,15 @@ class P115MediaOrganizer(_PluginBase):
             logger.warning(f"停止115云端媒体整理服务失败：{err}")
 
     def dry_run_movie(self):
-        return self._dry_run_for("movie")
+        return self._run_exclusive("dry_run_movie", lambda: self._dry_run_for("movie"))
 
     def dry_run_tv(self):
-        return self._dry_run_for("tv")
+        return self._run_exclusive("dry_run_tv", lambda: self._dry_run_for("tv"))
 
     def dry_run_all(self):
+        return self._run_exclusive("dry_run_all", self._dry_run_all)
+
+    def _dry_run_all(self):
         sources = self._source_mapping_list()
         logger.info(f"【115云端媒体整理】开始 dry-run：来源 {len(sources)} 个")
         plan = []
@@ -577,6 +625,9 @@ class P115MediaOrganizer(_PluginBase):
 
 
     def trigger_api(self, data: dict = None):
+        return self._run_exclusive("external_trigger", lambda: self._trigger_api(data))
+
+    def _trigger_api(self, data: dict = None):
         data = data or {}
         source = str(data.get("source") or "external").strip()
         execute = self._safe_bool(data.get("execute"), default=not self._dry_run)
@@ -606,41 +657,41 @@ class P115MediaOrganizer(_PluginBase):
         if not plan:
             return schemas.Response(success=True, message="已触发整理：无可执行计划", data=result)
 
-        previous_dry_run = self._dry_run
-        if force_execute:
-            self._dry_run = False
-        try:
-            execute_response = self.execute_last_plan(trigger_source=source)
-        finally:
-            self._dry_run = previous_dry_run
+        execute_response = self._execute_last_plan(
+            trigger_source=source,
+            allow_dry_run=force_execute,
+        )
 
         result["executed"] = bool(execute_response.success)
         result["execute_result"] = execute_response.data
         return schemas.Response(success=execute_response.success, message=execute_response.message, data=result)
 
     def execute_last_plan(self, trigger_source: str = "manual"):
-        guard = self._execute_guard()
+        return self._run_exclusive(
+            "execute_last_plan",
+            lambda: self._execute_last_plan(trigger_source=trigger_source),
+        )
+
+    def _execute_last_plan(self, trigger_source: str = "manual", allow_dry_run: bool = False):
+        guard = self._execute_guard(allow_dry_run=allow_dry_run)
         if guard:
             return guard
         plan = self.get_data("last_plan") or []
         run_id = datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{uuid4().hex[:6]}"
         started_at = datetime.now()
         logger.info(f"【115云端媒体整理】开始执行 last_plan：run_id={run_id}，计划 {len(plan)} 条")
-        result = ExecuteResult(plan_id=plan[0].get("plan_id") if plan else "", total=len(plan))
+        executable = executable_plan_items(plan)
+        result = ExecuteResult(
+            plan_id=plan[0].get("plan_id") if plan else "",
+            total=len(executable),
+        )
         p115 = self._p115_ops()
         history = self.get_data("history") or []
         run_history: List[Dict[str, Any]] = []
         success_items: List[Dict[str, Any]] = []
 
-        # 1. 提前消化 action=skip / status=skipped 的项，避免进入 batch 阶段
-        pending: List[Dict[str, Any]] = []
-        for item in plan:
-            if item.get("action") == "skip" or item.get("status") == "skipped":
-                self._record_outcome(item, "skipped",
-                                     item.get("error") or "计划项标记为跳过",
-                                     run_id, history, run_history, result, success_items)
-                continue
-            pending.append(item)
+        # 1. 只执行仍处于 planned/failed 的项目；executed/skipped 为终态，不重复处理。
+        pending: List[Dict[str, Any]] = executable
 
         # 2. 按 batch_group_key 分组（旧 plan 缺字段时即时计算）
         groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -760,6 +811,9 @@ class P115MediaOrganizer(_PluginBase):
         return schemas.Response(success=bool(result.get("ok")), message=result.get("message"), data=result)
 
     def auto_run(self):
+        return self._run_exclusive("auto_run", self._auto_run)
+
+    def _auto_run(self):
         logger.info(f"【115云端媒体整理】自动运行开始：dry_run={self._dry_run}")
         response = self.dry_run_all()
         if not response.success:
@@ -801,7 +855,7 @@ class P115MediaOrganizer(_PluginBase):
                 source_cid = p115.resolve_path(source_path)
                 source = dict(source, source_cid=source_cid)
                 logger.info(f"【115云端媒体整理】来源路径解析成功：{source_path} -> {source_cid}")
-            target_cids = self._current_target_cids(p115=p115)
+            target_cids = self._current_target_cids(source=source, p115=p115)
             if media_type not in ("movie", "tv") or not source_cid:
                 return schemas.Response(success=False, message=f"来源映射无效：{source}")
             items = p115.walk_media_items(
@@ -831,16 +885,17 @@ class P115MediaOrganizer(_PluginBase):
             logger.error(f"生成115整理计划失败：{err}\n{traceback.format_exc()}")
             return schemas.Response(success=False, message=str(err))
 
-    def _execute_guard(self):
-        if self._dry_run:
+    def _execute_guard(self, allow_dry_run: bool = False):
+        if self._dry_run and not allow_dry_run:
             return schemas.Response(success=False, message="当前仍为dry_run=true，禁止执行移动")
         plan = self.get_data("last_plan") or []
-        if not plan:
-            return schemas.Response(success=False, message="没有可执行的last_plan")
-        snapshot = self._config_snapshot()
-        for item in plan:
-            if item.get("config_snapshot") != snapshot:
-                return schemas.Response(success=False, message="last_plan配置快照与当前配置不一致，请重新dry-run")
+        validation = validate_plan(
+            plan,
+            config_snapshot=self._config_snapshot(),
+            ttl_hours=self._plan_ttl_hours,
+        )
+        if not validation.valid:
+            return schemas.Response(success=False, message=validation.message)
         p115 = self._p115_ops()
         if not p115.available:
             return schemas.Response(success=False, message=p115.import_error or "p115client不可用")
@@ -856,14 +911,22 @@ class P115MediaOrganizer(_PluginBase):
             "delete_empty_source_dirs": self._delete_empty_source_dirs,
         }
 
-    def _current_target_cids(self, p115: P115Ops = None) -> Dict[str, Dict[str, str]]:
-        target_cids = self._target_cids_dict()
-        resolved = {
-            "movie": dict(target_cids.get("movie", {})),
-            "tv": dict(target_cids.get("tv", {})),
-            "unrecognized": target_cids.get("unrecognized", ""),
-        }
-        self._resolve_target_paths(resolved, p115=p115)
+    def _current_target_cids(
+        self,
+        source: Dict[str, Any],
+        p115: P115Ops = None,
+    ) -> Dict[str, Dict[str, str]]:
+        """按当前来源的目标根目录解析分类 CID，避免同类型多来源串用目标目录。"""
+        p115 = p115 or self._p115_ops()
+        if not p115.available:
+            return self._target_cids_dict()
+        resolved, errors = resolve_target_cids_for_source(
+            self._target_cids_dict(),
+            source,
+            p115.resolve_path,
+        )
+        for error in errors:
+            logger.warning(f"【115云端媒体整理】目标分类路径解析失败：{error}")
         return resolved
 
 
@@ -908,23 +971,6 @@ class P115MediaOrganizer(_PluginBase):
             })
         return normalized
 
-    def _resolve_target_paths(self, target_cids: Dict[str, Any], p115: P115Ops = None):
-        for source in self._source_mapping_list():
-            media_type = source.get("media_type")
-            target_root_path = source.get("target_root_path")
-            if media_type not in ("movie", "tv") or not target_root_path:
-                continue
-            if p115 is None:
-                p115 = self._p115_ops()
-            if not p115.available:
-                return
-            for category in list(target_cids.get(media_type, {}).keys()):
-                if target_cids[media_type].get(category):
-                    continue
-                try:
-                    target_cids[media_type][category] = p115.resolve_path(f"{target_root_path.rstrip('/')}/{category}")
-                except Exception:
-                    pass
 
     def _record_outcome(self, item: Dict[str, Any], status: str, error: str,
                         run_id: str,
@@ -965,8 +1011,9 @@ class P115MediaOrganizer(_PluginBase):
         一次 ensure_dir + 一次 list_entries 冲突检查 + batch_rename + batch_move；
         任一阶段抛错时退回逐条 fallback，单条粒度的成功/失败仍写入 history。
         """
-        # 准入：缺关键 ID 的直接 failed
+        # 准入：校验关键 ID，并确认源文件仍处于 dry-run 时的位置和状态。
         accepted: List[tuple] = []  # (source_id, item)
+        source_cache: Dict[str, Dict[str, Any]] = {}
         for item in items:
             source_id = item.get("source_cid") if item.get("source_is_dir") else item.get("source_fid")
             if not source_id:
@@ -975,6 +1022,35 @@ class P115MediaOrganizer(_PluginBase):
                 continue
             if not item.get("target_parent_cid"):
                 self._record_outcome(item, "failed", "目标父目录CID为空",
+                                     run_id, history, run_history, result, success_items)
+                continue
+            parent_cid = str(item.get("source_parent_cid") or "")
+            if not parent_cid:
+                self._record_outcome(item, "failed", "源父目录CID为空",
+                                     run_id, history, run_history, result, success_items)
+                continue
+            if parent_cid not in source_cache:
+                try:
+                    source_cache[parent_cid] = self._entries_by_id(p115, parent_cid)
+                except Exception as err:
+                    source_cache[parent_cid] = {"__error__": err}
+            parent_entries = source_cache[parent_cid]
+            if "__error__" in parent_entries:
+                self._record_outcome(item, "failed", f"执行前校验源目录失败：{parent_entries['__error__']}",
+                                     run_id, history, run_history, result, success_items)
+                continue
+            source_entry = parent_entries.get(str(source_id))
+            if source_entry is None:
+                self._record_outcome(item, "failed", "源文件已移动或不存在，请重新dry-run",
+                                     run_id, history, run_history, result, success_items)
+                continue
+            source_validation = source_entry_matches_plan(
+                item,
+                current_name=p115.entry_name(source_entry),
+                current_size=p115.entry_size(source_entry),
+            )
+            if not source_validation.valid:
+                self._record_outcome(item, "failed", source_validation.message,
                                      run_id, history, run_history, result, success_items)
                 continue
             accepted.append((source_id, item))
@@ -1029,27 +1105,48 @@ class P115MediaOrganizer(_PluginBase):
         renames = {sid: name for sid, item, name in to_process
                    if name != item.get("source_name")}
         rename_failed_sids = set()
+        already_moved_sids = set()
         if renames:
+            completed_rename_sids = set()
             try:
                 for chunk in self._chunks_dict(renames, BATCH_RENAME_MAX):
                     logger.info(f"【115云端媒体整理】batch_rename({len(chunk)})")
                     p115.batch_rename(chunk)
+                    completed_rename_sids.update(chunk)
             except P115UnavailableError as err:
-                logger.warning(f"【115云端媒体整理】batch_rename 失败，逐条 fallback：{err}")
+                logger.warning(f"【115云端媒体整理】batch_rename 结果不确定，核对状态后逐条恢复：{err}")
                 item_by_sid = {sid: item for sid, item, _ in to_process}
                 for fid, name in renames.items():
+                    if fid in completed_rename_sids:
+                        continue
+                    item = item_by_sid[fid]
+                    state = self._locate_item_state(p115, item, final_parent, name)
+                    if state == "target":
+                        already_moved_sids.add(fid)
+                        continue
+                    if state == "renamed":
+                        continue
+                    if state != "source":
+                        rename_failed_sids.add(fid)
+                        self._record_outcome(item, "failed", "rename 后无法确认源文件状态",
+                                             run_id, history, run_history, result, success_items)
+                        continue
                     try:
                         p115.rename(fid, name)
                     except Exception as single_err:
                         rename_failed_sids.add(fid)
-                        item = item_by_sid.get(fid)
-                        if item is not None:
-                            self._record_outcome(item, "failed", f"rename 失败：{single_err}",
-                                                 run_id, history, run_history, result, success_items)
+                        self._record_outcome(item, "failed", f"rename 失败：{single_err}",
+                                             run_id, history, run_history, result, success_items)
 
-        # 阶段 2：batch_move（剔除 rename 失败的）
+        # 阶段 2：batch_move（剔除 rename 失败和已确认移动成功的项目）
+        for sid, item, name in to_process:
+            if sid in already_moved_sids:
+                item["target_name"] = name
+                item["target_parent_cid"] = final_parent
+                self._record_outcome(item, "executed", "",
+                                     run_id, history, run_history, result, success_items)
         movable = [(sid, item, name) for sid, item, name in to_process
-                   if sid not in rename_failed_sids]
+                   if sid not in rename_failed_sids and sid not in already_moved_sids]
         if not movable:
             return
         fids = [sid for sid, _, _ in movable]
@@ -1062,8 +1159,19 @@ class P115MediaOrganizer(_PluginBase):
                 self._record_outcome(item, "executed", "",
                                      run_id, history, run_history, result, success_items)
         except P115UnavailableError as err:
-            logger.warning(f"【115云端媒体整理】batch_move 失败，逐条 fallback：{err}")
+            logger.warning(f"【115云端媒体整理】batch_move 结果不确定，核对状态后逐条恢复：{err}")
             for sid, item, name in movable:
+                state = self._locate_item_state(p115, item, final_parent, name)
+                if state == "target":
+                    item["target_name"] = name
+                    item["target_parent_cid"] = final_parent
+                    self._record_outcome(item, "executed", "",
+                                         run_id, history, run_history, result, success_items)
+                    continue
+                if state not in {"source", "renamed"}:
+                    self._record_outcome(item, "failed", "move 后无法确认源文件状态",
+                                         run_id, history, run_history, result, success_items)
+                    continue
                 try:
                     p115.move(sid, final_parent)
                     item["target_name"] = name
@@ -1073,6 +1181,41 @@ class P115MediaOrganizer(_PluginBase):
                 except Exception as single_err:
                     self._record_outcome(item, "failed", f"move 失败：{single_err}",
                                          run_id, history, run_history, result, success_items)
+
+    @staticmethod
+    def _entries_by_id(p115: P115Ops, parent_cid: str) -> Dict[str, Any]:
+        entries = {}
+        for entry in p115.list_entries(parent_cid):
+            entry_id = p115.entry_cid(entry) if p115.is_folder(entry) else p115.entry_fid(entry)
+            if entry_id:
+                entries[str(entry_id)] = entry
+        return entries
+
+    @staticmethod
+    def _locate_item_state(
+        p115: P115Ops,
+        item: Dict[str, Any],
+        target_parent: str,
+        target_name: str,
+    ) -> str:
+        """在副作用响应不确定时核对真实状态，避免盲目重复 rename/move。"""
+        source_id = str(item.get("source_cid") if item.get("source_is_dir") else item.get("source_fid") or "")
+        if not source_id:
+            return "missing"
+        try:
+            target_entry = p115.find_entry_by_id(target_parent, source_id)
+            if target_entry is not None and p115.entry_name(target_entry) == target_name:
+                return "target"
+        except Exception:
+            pass
+        source_parent = str(item.get("source_parent_cid") or "")
+        try:
+            source_entry = p115.find_entry_by_id(source_parent, source_id)
+        except Exception:
+            return "unknown"
+        if source_entry is None:
+            return "missing"
+        return "renamed" if p115.entry_name(source_entry) == target_name else "source"
 
     def _execute_single_item_fallback(self, p115: P115Ops,
                                        item: Dict[str, Any],
@@ -1480,6 +1623,7 @@ class P115MediaOrganizer(_PluginBase):
             "run_limit": 100,
             "history_page": 1,
             "history_page_size": 50,
+            "plan_ttl_hours": 24,
             "run_page": 1,
             "run_page_size": 10,
         }

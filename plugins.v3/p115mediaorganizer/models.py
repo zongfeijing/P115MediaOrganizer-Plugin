@@ -24,10 +24,12 @@ class OrganizePlan:
     plan_id: str
     item_id: str
     created_at: str
+    created_at_epoch: float
     media_type: str
     config_snapshot: Dict[str, Any]
     source_name: str
     source_ext: Optional[str]
+    source_size: int
     source_fid: Optional[str]
     source_cid: Optional[str]
     source_parent_cid: str

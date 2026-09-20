@@ -451,6 +451,17 @@ class P115Ops:
                 return entry
         return None
 
+    def find_entry_by_id(self, parent_cid: str, entry_id: str) -> Optional[Any]:
+        """在指定父目录内按文件/目录 ID 查找条目。"""
+        expected = str(entry_id or "")
+        if not expected:
+            return None
+        for entry in self.list_entries(parent_cid):
+            current = self.entry_cid(entry) if self.is_folder(entry) else self.entry_fid(entry)
+            if current == expected:
+                return entry
+        return None
+
     def list_empty_dirs_bottom_up(self, root_cid: str, max_depth: int) -> List[str]:
         empty_dirs: List[str] = []
 

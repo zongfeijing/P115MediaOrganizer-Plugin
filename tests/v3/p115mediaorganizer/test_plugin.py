@@ -34,6 +34,7 @@ def load_module(name: str):
 models = load_module("models")
 category_mapper = load_module("category_mapper")
 planner_module = load_module("planner")
+execution_module = load_module("execution")
 
 
 class MediaSource(Enum):
@@ -45,7 +46,7 @@ class V3ContractTest(unittest.TestCase):
         v2 = json.loads((ROOT / "package.v2.json").read_text())
         v3 = json.loads((ROOT / "package.v3.json").read_text())
         self.assertIs(v2["P115MediaOrganizer"]["v3"], False)
-        self.assertEqual(v3["P115MediaOrganizer"]["version"], "1.0.0")
+        self.assertEqual(v3["P115MediaOrganizer"]["version"], "1.0.1")
         self.assertEqual(v3["P115MediaOrganizer"]["system_version"], ">=3.0.0")
 
     def test_v3_code_does_not_import_legacy_or_internal_host_paths(self):
@@ -73,6 +74,60 @@ class V3ContractTest(unittest.TestCase):
                 if module and module.startswith(forbidden):
                     violations.append(f"{path.name}:{node.lineno}:{module}")
         self.assertEqual(violations, [])
+
+    def test_terminal_plan_items_are_not_executed_again(self):
+        plan = [
+            {"status": "executed", "action": "move"},
+            {"status": "skipped", "action": "skip"},
+            {"status": "failed", "action": "move"},
+            {"status": "planned", "action": "move"},
+        ]
+        executable = execution_module.executable_plan_items(plan)
+        self.assertEqual(executable, plan[2:])
+
+    def test_expired_plan_is_rejected(self):
+        snapshot = {"source_mappings": []}
+        plan = [{
+            "plan_id": "plan-1",
+            "status": "planned",
+            "action": "move",
+            "config_snapshot": snapshot,
+            "created_at_epoch": 100.0,
+        }]
+        result = execution_module.validate_plan(
+            plan,
+            config_snapshot=snapshot,
+            ttl_hours=1,
+            now_epoch=3701.0,
+        )
+        self.assertFalse(result.valid)
+        self.assertIn("超过1小时", result.message)
+
+    def test_changed_source_file_is_rejected(self):
+        item = {"source_name": "old.mkv", "source_size": 100, "source_is_dir": False}
+        renamed = execution_module.source_entry_matches_plan(
+            item, current_name="new.mkv", current_size=100
+        )
+        resized = execution_module.source_entry_matches_plan(
+            item, current_name="old.mkv", current_size=101
+        )
+        self.assertFalse(renamed.valid)
+        self.assertFalse(resized.valid)
+
+    def test_target_categories_are_resolved_per_source_root(self):
+        target_cids = {"movie": {"外语电影": ""}, "tv": {}, "unrecognized": ""}
+        first, _ = execution_module.resolve_target_cids_for_source(
+            target_cids,
+            {"media_type": "movie", "target_root_path": "/库A"},
+            lambda path: f"cid:{path}",
+        )
+        second, _ = execution_module.resolve_target_cids_for_source(
+            target_cids,
+            {"media_type": "movie", "target_root_path": "/库B"},
+            lambda path: f"cid:{path}",
+        )
+        self.assertEqual(first["movie"]["外语电影"], "cid:/库A/外语电影")
+        self.assertEqual(second["movie"]["外语电影"], "cid:/库B/外语电影")
 
     def test_category_prefers_v3_library_category(self):
         mapper = category_mapper.CategoryMapper()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 import uuid
 from collections import defaultdict
 from datetime import datetime
@@ -97,10 +98,12 @@ class Planner:
                 plan_id=plan_id,
                 item_id=item_key,
                 created_at=created_at,
+                created_at_epoch=time.time(),
                 media_type=media_type,
                 config_snapshot=config_snapshot,
                 source_name=item.name,
                 source_ext=item.ext,
+                source_size=item.size,
                 source_fid=item.fid,
                 source_cid=item.cid,
                 source_parent_cid=item.parent_cid,
