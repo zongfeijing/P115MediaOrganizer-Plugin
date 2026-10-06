@@ -30,7 +30,7 @@ Cookie options:
 - `cookie_path`: point it to a cookie file mounted inside the MoviePilot container, for example `/config/115-cookies.txt`.
 - `cookie_text`: paste a cookie directly when the file path is unavailable or invalid.
 
-`p115client` is constructed with `check_for_relogin=True` when supported, so it can re-trigger a QR login and write the cookie back when the existing one expires.
+V3 pins `p115client==0.0.9.7.2` together with `python-concurrenttools==0.1.9`. It constructs the client with `P115Client(cookies=...)`; the newer client no longer accepts `check_for_relogin`. When the configured cookie expires, V3 reports the failure and stops instead of promising automatic renewal or starting an interactive QR login. V2 retains its existing client behavior.
 
 ### Directory Mapping
 

@@ -3,5 +3,7 @@ name = "moviepilot-plugin-p115mediaorganizer"
 dynamic = ["version"]
 requires-python = ">=3.12"
 dependencies = [
-    "p115client==0.0.9.6.5.1",
+    "p115client==0.0.9.7.2",
+    # Keep the client and concurrenttools API generation in sync.
+    "python-concurrenttools==0.1.9",
 ]

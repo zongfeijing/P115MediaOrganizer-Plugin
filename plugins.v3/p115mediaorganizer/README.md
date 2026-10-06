@@ -12,7 +12,9 @@
 
 ## 依赖
 
-插件依赖 `p115client==0.0.9.6.5.1`。若依赖安装失败，请检查 MoviePilot 的 PIP 镜像和网络配置，然后在插件市场中重新安装或更新插件。
+插件固定使用 `p115client==0.0.9.7.2` 和 `python-concurrenttools==0.1.9`，两者需要配套升级。旧版 `p115client==0.0.9.6.5.1` 仍导入 `threadpool_map` / `taskgroup_map`，不能与 `python-concurrenttools==0.1.9` 混用。
+
+若依赖安装失败，请检查 MoviePilot 的 PIP 镜像和网络配置，然后在插件市场中重新安装或更新插件。
 
 ## 配置要点
 
@@ -23,4 +25,22 @@
 - `category_mapping`：可选分类别名映射。
 - `dry_run`：建议先保持开启，确认计划后再执行。
 
+V3 通过 `P115Client(cookies=...)` 使用现有 Cookie，不再传入新版客户端已移除的 `check_for_relogin`。Cookie 失效时会明确报错并停止，不保证自动续期或在后台发起扫码登录。
+
 执行成功后，插件可按本次涉及的分类刷新 MoviePilot 中已连接的 Plex 媒体库。
+
+## 依赖兼容性测试
+
+普通合同测试不要求安装第三方客户端：
+
+```sh
+python -m unittest discover -s tests -v
+```
+
+在 Python 3.12+ 的独立环境中安装上述固定依赖后，可以运行真实客户端测试：
+
+```sh
+P115_REQUIRE_DEPENDENCY_TESTS=1 python -m unittest tests.v3.p115mediaorganizer.test_dependencies -v
+```
+
+测试使用虚构 Cookie，拦截网络连接并记录客户端请求，不连接真实 115 账号，也不移动、重命名或删除云端文件。

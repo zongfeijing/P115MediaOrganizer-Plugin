@@ -4,11 +4,13 @@ import ast
 import importlib.util
 import json
 import sys
+import tomllib
 import types
 import unittest
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -59,8 +61,50 @@ class V3ContractTest(unittest.TestCase):
         v2 = json.loads((ROOT / "package.v2.json").read_text())
         v3 = json.loads((ROOT / "package.v3.json").read_text())
         self.assertIs(v2["P115MediaOrganizer"]["v3"], False)
-        self.assertEqual(v3["P115MediaOrganizer"]["version"], "1.2.0")
+        plugin_tree = ast.parse((PLUGIN_DIR / "__init__.py").read_text())
+        version_node = next(
+            node for node in ast.walk(plugin_tree)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "plugin_version" for target in node.targets)
+        )
+        declared_version = ast.literal_eval(version_node.value)
+        self.assertEqual(v3["P115MediaOrganizer"]["version"], declared_version)
+        self.assertIn(f"v{declared_version}", v3["P115MediaOrganizer"]["history"])
         self.assertEqual(v3["P115MediaOrganizer"]["system_version"], ">=3.0.0")
+
+    def test_p115client_transitive_dependency_is_pinned_to_compatible_api(self):
+        manifest = tomllib.loads((PLUGIN_DIR / "pyproject.toml").read_text())
+        dependencies = manifest["project"]["dependencies"]
+        self.assertIn("p115client==0.0.9.7.2", dependencies)
+        self.assertIn("python-concurrenttools==0.1.9", dependencies)
+
+    def test_client_construction_uses_cookie_keyword_without_relogin(self):
+        client_factory = Mock(return_value=object())
+        cookies = "UID=test; CID=test; SEID=test"
+        result = p115_ops_module.P115Ops._construct_cookie_client(client_factory, cookies)
+        client_factory.assert_called_once_with(cookies=cookies)
+        self.assertIs(result, client_factory.return_value)
+
+    def test_client_construction_error_does_not_retry_or_start_login(self):
+        client_factory = Mock(side_effect=TypeError("invalid cookie input"))
+        with self.assertRaisesRegex(TypeError, "invalid cookie input"):
+            p115_ops_module.P115Ops._construct_cookie_client(client_factory, "bad")
+        client_factory.assert_called_once_with(cookies="bad")
+
+    def test_dependency_import_failure_is_not_reported_as_client_uninstalled(self):
+        ops = object.__new__(p115_ops_module.P115Ops)
+        original_import = __import__
+
+        def failing_import(name, *args, **kwargs):
+            if name == "p115client":
+                raise ImportError("cannot import name 'threadpool_map' from 'concurrenttools'")
+            return original_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=failing_import):
+            self.assertIsNone(ops._load_p115_client())
+        self.assertIn("依赖导入失败", ops.import_error)
+        self.assertIn("threadpool_map", ops.import_error)
+        self.assertNotIn("未安装", ops.import_error)
 
     def test_v3_code_does_not_import_legacy_or_internal_host_paths(self):
         forbidden = (

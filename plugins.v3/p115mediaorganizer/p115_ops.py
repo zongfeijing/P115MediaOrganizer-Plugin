@@ -106,24 +106,18 @@ class P115Ops:
 
     def _construct_client(self, P115Client):
         if self.cookie_text:
-            return self._construct_with_relogin(P115Client, self.cookie_text)
+            return self._construct_cookie_client(P115Client, self.cookie_text)
         cookie_file = Path(self.cookie_path) if self.cookie_path else None
         if not cookie_file or not cookie_file.exists():
             self.import_error = f"115 Cookie文件不存在：{self.cookie_path}"
             return None
-        return self._construct_with_relogin(P115Client, cookie_file)
+        return self._construct_cookie_client(P115Client, cookie_file)
 
     @staticmethod
-    def _construct_with_relogin(P115Client, arg):
-        # 优先启用 check_for_relogin，让 p115client 自身在 cookie 过期时尝试自动续命
-        try:
-            return P115Client(arg, check_for_relogin=True)
-        except TypeError:
-            pass
-        try:
-            return P115Client(arg)
-        except TypeError:
-            return P115Client(cookies=arg)
+    def _construct_cookie_client(P115Client, arg):
+        # p115client 0.0.9.7.2 no longer accepts check_for_relogin. Pass the
+        # configured cookie explicitly; never fall back to an interactive login.
+        return P115Client(cookies=arg)
 
     def _load_p115_client(self):
         try:
@@ -131,7 +125,7 @@ class P115Ops:
             return P115Client
         except ImportError as err:
             self.import_error = (
-                f"p115client 未安装：{err}。请在 MoviePilot 插件市场中重新安装或更新本插件，"
+                f"p115client 或其依赖导入失败：{err}。请在 MoviePilot 插件市场中重新安装或更新本插件，"
                 f"让宿主根据 pyproject.toml 重新安装依赖。"
             )
             return None

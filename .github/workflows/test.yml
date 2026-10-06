@@ -19,3 +19,28 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Check whitespace
         run: git diff --check
+
+  v3-dependencies:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.12', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install pinned V3 dependencies
+        run: |
+          python - <<'PYTHON'
+          import subprocess
+          import sys
+          import tomllib
+          from pathlib import Path
+          manifest = tomllib.loads(Path('plugins.v3/p115mediaorganizer/pyproject.toml').read_text())
+          subprocess.run([sys.executable, '-m', 'pip', 'install', *manifest['project']['dependencies']], check=True)
+          PYTHON
+      - name: Run real client contracts without network access
+        env:
+          P115_REQUIRE_DEPENDENCY_TESTS: '1'
+        run: python -m unittest discover -s tests -v
