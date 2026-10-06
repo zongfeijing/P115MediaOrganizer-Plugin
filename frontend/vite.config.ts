@@ -17,6 +17,9 @@ export default defineConfig({
   ],
   build: {
     target: "esnext",
+    // esbuild can choose different minified identifiers across native platforms.
+    // Keep federation output reproducible so CI can verify checked-in assets.
+    minify: false,
     outDir: "../plugins.v3/p115mediaorganizer/dist",
     emptyOutDir: true,
     cssCodeSplit: true,
