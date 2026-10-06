@@ -59,6 +59,7 @@ class OrganizePlan:
     warnings: List[str] = field(default_factory=list)
     # 执行阶段按目标父目录分组的 key（同 key 的 plan item 可一次性 batch_rename / batch_move）；
     # 在 planner 里就填好，方便详情页展示和后续错误定位。
+    target_root_path: str = ""
     batch_group_key: str = ""
     batch_index: int = 0
 

@@ -38,9 +38,29 @@ jobs:
           import tomllib
           from pathlib import Path
           manifest = tomllib.loads(Path('plugins.v3/p115mediaorganizer/pyproject.toml').read_text())
-          subprocess.run([sys.executable, '-m', 'pip', 'install', *manifest['project']['dependencies']], check=True)
+          subprocess.run([sys.executable, '-m', 'pip', 'install', *manifest['project']['dependencies'], 'fastapi==0.135.2', 'httpx', 'apscheduler==3.11.2', 'pytz'], check=True)
           PYTHON
       - name: Run real client contracts without network access
         env:
           P115_REQUIRE_DEPENDENCY_TESTS: '1'
         run: python -m unittest discover -s tests -v
+
+  v3-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      - name: Verify checked-in frontend assets match source
+        run: |
+          git diff --exit-code -- plugins.v3/p115mediaorganizer/dist
+          test -z "$(git ls-files --others --exclude-standard plugins.v3/p115mediaorganizer/dist)"

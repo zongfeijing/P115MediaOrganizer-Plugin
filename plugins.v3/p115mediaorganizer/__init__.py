@@ -3,14 +3,12 @@ import random
 import threading
 import time
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from html import escape
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-import pytz
-from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app import schemas
@@ -30,6 +28,9 @@ from .execution import (
     source_entry_matches_plan,
     validate_plan,
 )
+from .configuration import check_configuration, connection_mode
+from .task_state import TaskCancelled, TaskState
+from .usability import UsabilityMixin
 from .models import ExecuteResult
 from .p115_ops import ANTI_BLOCK_DEFAULTS, BATCH_RENAME_MAX, P115Ops, P115UnavailableError
 from .planner import Planner, compute_batch_group_key
@@ -67,11 +68,11 @@ DEFAULT_TARGET_CIDS = {
 }
 
 
-class P115MediaOrganizer(_PluginBase):
+class P115MediaOrganizer(UsabilityMixin, _PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "1.2.1"
+    plugin_version = "1.3.0"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -97,7 +98,7 @@ class P115MediaOrganizer(_PluginBase):
     _exclude_keywords = "sample,trailer,花絮,预告"
     _cookie_path = "/config/115-cookies.txt"
     _cookie_text = ""
-    _source_mappings = json.dumps(DEFAULT_SOURCE_MAPPINGS, ensure_ascii=False, indent=2)
+    _source_mappings = "[]"
     _category_mapping = json.dumps(DEFAULT_CATEGORY_MAPPING, ensure_ascii=False, indent=2)
     _target_cids = json.dumps(DEFAULT_TARGET_CIDS, ensure_ascii=False, indent=2)
     _min_request_interval_ms = ANTI_BLOCK_DEFAULTS["min_request_interval_ms"]
@@ -112,31 +113,46 @@ class P115MediaOrganizer(_PluginBase):
     _plan_ttl_hours = 24
     _run_page = 1
     _run_page_size = 10
-    _scheduler = None
     _ops_instance = None
 
     def __init__(self):
         super().__init__()
-        self._scheduler = None
         self._ops_instance = None
         self._operation_lock = threading.RLock()
         self._operation_depth = 0
         self._active_operation = ""
+        self._task = TaskState()
+        self._confirmation = None
+        self._task_owner_thread = None
+        self._scan_records = []
+        self._scan_record_counts = {}
+        self._scan_plan_id = ""
+        self._cookie_mode = "file"
+        self._effective_config = {}
 
     def init_plugin(self, config: dict = None):
+        if self._active_operation:
+            raise ValueError("任务运行中，请等待完成或停止后再修改配置")
         with self._operation_lock:
+            if self._task.snapshot().get("status") in ("queued", "running", "stopping"):
+                raise ValueError("任务运行中，停止或等待任务完成后再修改配置")
             return self._init_plugin(config)
 
     def _init_plugin(self, config: dict = None):
         self._stop_service()
         self._ops_instance = None  # 配置可能变了，重置缓存的 P115Ops 单例
-        config = config or {}
-        self._enabled = bool(config.get("enabled", False))
-        self._notify = bool(config.get("notify", True))
-        self._onlyonce = bool(config.get("onlyonce", False))
+        config = dict(config or {})
+        self._effective_config = config
+        self._confirmation = None
+        self._task.cancel.clear()
+        self.save_data("connection_health", {"ok": None, "kind": "unknown", "message": "配置已更新，请重新检查连接"})
+        self.save_data("path_checks", [])
+        self._enabled = self._safe_bool(config.get("enabled"), False)
+        self._notify = self._safe_bool(config.get("notify"), True)
+        self._onlyonce = self._safe_bool(config.get("onlyonce"), False)
         self._cron = str(config.get("cron") or "").strip()
-        self._dry_run = bool(config.get("dry_run", True))
-        self._delete_empty_source_dirs = bool(config.get("delete_empty_source_dirs", True))
+        self._dry_run = self._safe_bool(config.get("dry_run"), True)
+        self._delete_empty_source_dirs = self._safe_bool(config.get("delete_empty_source_dirs"), True)
         self._refresh_plex_after_execute = self._safe_bool(config.get("refresh_plex_after_execute"), True)
         self._allow_external_execute = self._safe_bool(config.get("allow_external_execute"), False)
         self._plex_mediaservers = config.get("plex_mediaservers") or []
@@ -150,9 +166,14 @@ class P115MediaOrganizer(_PluginBase):
         self._exclude_keywords = str(config.get("exclude_keywords") or "")
         self._cookie_path = str(config.get("cookie_path") or "/config/115-cookies.txt")
         self._cookie_text = str(config.get("cookie_text") or "")
-        self._source_mappings = config.get("source_mappings") or self._source_mappings
-        self._category_mapping = config.get("category_mapping") or self._category_mapping
-        self._target_cids = config.get("target_cids") or self._target_cids
+        self._cookie_mode = connection_mode(config)
+        self._source_mappings = config.get("source_mappings", "[]")
+        self._category_mapping = config.get("category_mapping", json.dumps(DEFAULT_CATEGORY_MAPPING, ensure_ascii=False))
+        if isinstance(self._category_mapping, dict):
+            self._category_mapping = json.dumps(self._category_mapping, ensure_ascii=False)
+        self._target_cids = config.get("target_cids", json.dumps(DEFAULT_TARGET_CIDS, ensure_ascii=False))
+        if isinstance(self._target_cids, dict):
+            self._target_cids = json.dumps(self._target_cids, ensure_ascii=False)
         self._min_request_interval_ms = max(0, self._safe_int(config.get("min_request_interval_ms"), ANTI_BLOCK_DEFAULTS["min_request_interval_ms"]))
         self._max_retries = max(0, self._safe_int(config.get("max_retries"), ANTI_BLOCK_DEFAULTS["max_retries"]))
         self._retry_base_seconds = max(0.1, self._safe_float(config.get("retry_base_seconds"), ANTI_BLOCK_DEFAULTS["retry_base_seconds"]))
@@ -180,15 +201,16 @@ class P115MediaOrganizer(_PluginBase):
             self.update_config(config=config)
 
         if self._onlyonce:
-            logger.info("【115云端媒体整理】已安排立即运行任务，约 3 秒后触发")
-            self._scheduler = BackgroundScheduler(timezone=settings.TZ)
-            self._scheduler.add_job(
-                func=self.auto_run,
-                trigger="date",
-                run_date=datetime.now(tz=pytz.timezone(settings.TZ)) + timedelta(seconds=3),
-                name="115云端媒体整理立即运行",
-            )
-            self._scheduler.start()
+            validation = self.validate_config_api()
+            if validation.success:
+                from app.sdk import scheduler as scheduler_sdk
+                scheduled = scheduler_sdk.add_plugin_once_job(
+                    self._instance_id(), "auto_once", self.auto_run,
+                    "115云端媒体整理立即运行", delay_seconds=3)
+                if not scheduled:
+                    logger.warning("【115云端媒体整理】宿主调度器未运行，未安排立即运行")
+            else:
+                logger.warning("【115云端媒体整理】配置检查未通过，未安排立即运行")
             self._onlyonce = False
             config["onlyonce"] = False
             self.update_config(config=config)
@@ -200,9 +222,20 @@ class P115MediaOrganizer(_PluginBase):
     def get_command() -> List[Dict[str, Any]]:
         return []
 
+    @staticmethod
+    def get_render_mode() -> Tuple[str, str]:
+        return "vue", "dist/assets"
+
     def get_api(self) -> List[Dict[str, Any]]:
         response_model = schemas.Response
         return [
+            {"path": "/workflow", "endpoint": self.workflow_status_api, "methods": ["GET"], "auth": "bear", "response_model": response_model},
+            {"path": "/validate_config", "endpoint": self.validate_config_api, "methods": ["POST"], "auth": "bear", "response_model": response_model},
+            {"path": "/tasks/start", "endpoint": self.start_task_api, "methods": ["POST"], "auth": "bear", "response_model": response_model},
+            {"path": "/tasks/stop", "endpoint": self.stop_task_api, "methods": ["POST"], "auth": "bear", "response_model": response_model},
+            {"path": "/execute/prepare", "endpoint": self.prepare_execute_api, "methods": ["POST"], "auth": "bear", "response_model": response_model},
+            {"path": "/execute/confirm", "endpoint": self.confirm_execute_api, "methods": ["POST"], "auth": "bear", "response_model": response_model},
+            {"path": "/records", "endpoint": self.records_api, "methods": ["GET"], "auth": "bear", "response_model": response_model},
             {"path": "/dry_run_movie", "endpoint": self.dry_run_movie, "methods": ["POST"], "auth": "bear", "response_model": response_model, "summary": "生成电影整理计划"},
             {"path": "/dry_run_tv", "endpoint": self.dry_run_tv, "methods": ["POST"], "auth": "bear", "response_model": response_model, "summary": "生成电视剧整理计划"},
             {"path": "/dry_run_all", "endpoint": self.dry_run_all, "methods": ["POST"], "auth": "bear", "response_model": response_model, "summary": "生成全部整理计划"},
@@ -217,7 +250,7 @@ class P115MediaOrganizer(_PluginBase):
         ]
 
     def get_service(self) -> List[Dict[str, Any]]:
-        if not self.get_state() or not self._cron:
+        if not self.get_state() or not self._cron or not self.validate_config_api().success:
             return []
         return [{
             "id": f"{self.__class__.__name__}.AutoRun",
@@ -311,7 +344,7 @@ class P115MediaOrganizer(_PluginBase):
                 ("anti_block", "反封锁", anti_block_content),
                 ("advanced", "高级", advanced_content),
             ], model="_form_tab"),
-        }], self._default_config()
+        }], {**self._default_config(), "cookie_mode": self._cookie_mode}
 
     def get_page(self) -> List[dict]:
         last_plan = self.get_data("last_plan") or []
@@ -321,7 +354,7 @@ class P115MediaOrganizer(_PluginBase):
         p115 = self._p115_ops()
         p115_ok = bool(p115.available)
         p115_status = "可用" if p115_ok else (p115.import_error or "不可用")
-        health = p115.health_check(force=False) if p115_ok else {"ok": False, "message": p115_status, "checked_at": ""}
+        health = self.get_data("connection_health") or {"ok": None, "message": "尚未检查连接", "checked_at": ""}
 
         sources = self._source_mapping_list()
         last_run_time = ""
@@ -579,37 +612,59 @@ class P115MediaOrganizer(_PluginBase):
         }]
 
     def _run_exclusive(self, operation: str, callback):
-        """串行化扫描和执行，避免 API、定时任务与立即运行互相覆盖状态。"""
+        """One task per instance; nested automatic calls share the outer task."""
+        state = self._task.snapshot()
+        if state.get("status") in ("queued", "running", "stopping") and self._task_owner_thread != threading.get_ident():
+            return schemas.Response(success=False, message="后台任务运行中，请等待结束或停止任务")
         if not self._operation_lock.acquire(blocking=False):
-            return schemas.Response(
-                success=False,
-                message=f"已有任务正在运行：{self._active_operation or 'unknown'}",
-            )
+            return schemas.Response(success=False, message="已有任务正在运行，请稍后重试")
         outermost = self._operation_depth == 0
+        owns_task = outermost and self._task_owner_thread != threading.get_ident()
+        terminal = {"status": "failed", "message": "任务中止，请查看插件日志"}
         self._operation_depth += 1
         if outermost:
             self._active_operation = operation
         try:
-            return callback()
+            if owns_task:
+                self._task.reserve(operation)
+                self._task.update(status="running", message="任务正在运行")
+                self._task_owner_thread = threading.get_ident()
+            response = callback()
+            terminal = {"status": "cancelled" if self._task.cancel.is_set() else ("completed" if response.success else "failed"),
+                        "message": response.message}
+            return response
+        except TaskCancelled as error:
+            terminal = {"status": "cancelled", "message": str(error)}
+            if owns_task:
+                return schemas.Response(success=False, message=str(error))
+            raise
         finally:
+            try:
+                if self._ops_instance is not None and hasattr(self._ops_instance, "cached_health"):
+                    self.save_data("connection_health", self._ops_instance.cached_health())
+            except Exception:
+                logger.warning("【115云端媒体整理】连接状态缓存保存失败，任务状态仍会正常释放")
             self._operation_depth -= 1
             if outermost:
+                self._execution_plan = None
                 self._active_operation = ""
+            if owns_task:
+                self._task_owner_thread = None
+                self._task.update(**terminal, finished_at=time.time())
             self._operation_lock.release()
 
     def stop_service(self):
+        self._task.request_stop()
         with self._operation_lock:
             return self._stop_service()
 
     def _stop_service(self):
-        try:
-            if self._scheduler:
-                self._scheduler.remove_all_jobs()
-                if self._scheduler.running:
-                    self._scheduler.shutdown()
-                self._scheduler = None
-        except Exception as err:
-            logger.warning(f"停止115云端媒体整理服务失败：{err}")
+        from app.sdk import scheduler as scheduler_sdk
+        scheduler_sdk.remove_plugin_once_job(self._instance_id(), "interactive_task")
+        scheduler_sdk.remove_plugin_once_job(self._instance_id(), "auto_once")
+        if self._task.snapshot().get("status") in ("queued", "stopping") and not self._active_operation:
+            self._task.update(status="cancelled", message="任务已取消", finished_at=time.time())
+        self._confirmation = None
 
     def dry_run_movie(self):
         return self._run_exclusive("dry_run_movie", lambda: self._dry_run_for("movie"))
@@ -621,28 +676,63 @@ class P115MediaOrganizer(_PluginBase):
         return self._run_exclusive("dry_run_all", self._dry_run_all)
 
     def _dry_run_all(self):
-        sources = self._source_mapping_list()
-        logger.info(f"【115云端媒体整理】开始 dry-run：来源 {len(sources)} 个")
-        plan = []
-        remaining = max(0, self._max_items_per_run)
-        for source in sources:
-            if self._max_items_per_run > 0 and remaining <= 0:
-                break
-            response = self._dry_run_source(
-                source,
-                save=False,
-                max_items=remaining if self._max_items_per_run > 0 else 0,
-            )
-            if not response.success:
-                return response
-            source_plan = response.data or []
-            plan.extend(source_plan)
-            if self._max_items_per_run > 0:
-                remaining -= len(source_plan)
-        self.save_data("last_plan", plan)
-        logger.info(f"【115云端媒体整理】dry-run 完成：计划 {len(plan)} 条")
-        return schemas.Response(success=True, message=f"已生成整理计划：{len(plan)} 条", data=plan)
+        return self._generate_plan()
 
+    def _generate_plan(self, media_type=None, save=True):
+        validation = self.validate_config_api()
+        if not validation.success:
+            return validation
+        sources = [s for s in self._source_mapping_list() if media_type is None or s["media_type"] == media_type]
+        self._confirmation = None
+        self._scan_plan_id = uuid4().hex
+        self._scan_records = []
+        self._scan_record_counts = {}
+        # An old executable plan must not survive a failed or cancelled replacement scan.
+        if save:
+            self.save_data("last_plan", [])
+        self.save_data("scan_summary", {})
+        self.save_data("scan_records", [])
+        plan = []
+        remaining = self._max_items_per_run if self._max_items_per_run > 0 else None
+        failure = None
+        complete = False
+        try:
+            for index, source in enumerate(sources):
+                self._checkpoint()
+                if remaining is not None and remaining <= 0:
+                    break
+                self._progress(phase="scanning", message=f"扫描来源 {index + 1}/{len(sources)}：{source['name']}")
+                response = self._dry_run_source(source, save=False, max_items=remaining or 0)
+                if not response.success:
+                    failure = response
+                    break
+                source_plan = response.data or []
+                plan.extend(source_plan)
+                if remaining is not None:
+                    remaining -= len(source_plan)
+                for item in source_plan:
+                    self._report_scan({"source_name": item.get("source_name"), "path_hint": item.get("path_hint"),
+                                       "status": item.get("status"), "reason": "；".join(item.get("warnings") or []) or "识别完成"})
+            if save and failure is None:
+                self.save_data("last_plan", plan)
+            if failure:
+                return failure
+            complete = True
+            ready = len(executable_plan_items(plan))
+            return schemas.Response(success=True, message=f"预览已生成：待执行 {ready}，跳过 {len(plan) - ready}", data=plan)
+        finally:
+            summary = {"counts": self._scan_record_counts, "record_count": sum(self._scan_record_counts.values()),
+                       "retained_records": len(self._scan_records), "limit_reached": remaining is not None and remaining <= 0,
+                       "plan_count": len(plan), "completed": complete and not self._task.cancel.is_set()}
+            self.save_data("scan_records", self._scan_records)
+            self.save_data("scan_summary", summary)
+
+    def _report_scan(self, record):
+        reason = record.get("reason") or record.get("status") or "已发现"
+        self._scan_record_counts[reason] = self._scan_record_counts.get(reason, 0) + 1
+        if len(self._scan_records) < 5000:
+            self._scan_records.append(record)
+        self._progress(discovered=sum(self._scan_record_counts.values()))
 
     def trigger_api(self, data: TriggerRequest = None):
         return self._run_exclusive("external_trigger", lambda: self._trigger_api(data))
@@ -707,6 +797,9 @@ class P115MediaOrganizer(_PluginBase):
         started_at = datetime.now()
         logger.info(f"【115云端媒体整理】开始执行 last_plan：run_id={run_id}，计划 {len(plan)} 条")
         executable = executable_plan_items(plan)
+        self._confirmation = None
+        self._execution_plan = plan
+        self._progress(phase="executing", total=len(executable), completed=0, message="执行前校验文件与目标目录")
         result = ExecuteResult(
             plan_id=plan[0].get("plan_id") if plan else "",
             total=len(executable),
@@ -734,19 +827,27 @@ class P115MediaOrganizer(_PluginBase):
         # 3. 逐 group 执行；同 group 内按 batch_size 切片；批与批之间 sleep
         for group_key, items in groups.items():
             for offset in range(0, len(items), batch_size):
+                if self._task.cancel.is_set():
+                    break
                 chunk = items[offset:offset + batch_size]
                 self._execute_group(p115, chunk, run_id,
                                     history, run_history, result, success_items)
-                time.sleep(self._jitter_sleep(self._sleep_between_batches))
+                self.save_data("last_plan", plan)
+                self.save_data("history", history[-max(1, self._history_limit):])
+                self._progress(completed=result.success + result.failed + result.skipped, success=result.success, failed=result.failed, message=f"已处理 {result.success + result.failed + result.skipped}/{len(executable)}")
+                self._task.cancel.wait(self._jitter_sleep(self._sleep_between_batches))
 
         cleaned_dirs = []
-        if self._delete_empty_source_dirs:
+        if self._delete_empty_source_dirs and not self._task.cancel.is_set():
+            self._progress(phase="cleanup", message="清理已成功整理来源中的空目录")
             cleaned_dirs = self._cleanup_empty_source_dirs(p115, success_items)
             result_dict = result.to_dict()
             result_dict["cleaned_empty_dirs"] = cleaned_dirs
         else:
             result_dict = result.to_dict()
-        result_dict["plex_refresh"] = self._refresh_plex_after_success(success_items)
+        result_dict["cancelled"] = self._task.cancel.is_set()
+        result_dict["remaining"] = len(executable_plan_items(plan))
+        result_dict["plex_refresh"] = [] if result_dict["cancelled"] else self._refresh_plex_after_success(success_items)
         result_dict["run_id"] = run_id
         result_dict["trigger_source"] = trigger_source or "manual"
         result_dict["started_at"] = started_at.strftime("%Y-%m-%d %H:%M:%S")
@@ -763,8 +864,10 @@ class P115MediaOrganizer(_PluginBase):
             f"【115云端媒体整理】执行完成：总计 {result.total}，成功 {result.success}，"
             f"失败 {result.failed}，跳过 {result.skipped}，清理空目录 {len(cleaned_dirs)}"
         )
-        self._notify_summary("执行完成", result_dict)
-        return schemas.Response(success=result.failed == 0, message=f"执行完成：成功 {result.success}，失败 {result.failed}，跳过 {result.skipped}，清理空目录 {len(cleaned_dirs)}", data=result_dict)
+        self._notify_summary("已安全停止" if result_dict["cancelled"] else "执行完成", result_dict)
+        self._execution_plan = None
+        prefix = "已安全停止" if result_dict["cancelled"] else "执行完成"
+        return schemas.Response(success=result.failed == 0, message=f"{prefix}：成功 {result.success}，失败 {result.failed}，跳过 {result.skipped}，清理空目录 {len(cleaned_dirs)}", data=result_dict)
 
     def history(self, page: int = None, page_size: int = None, run_page: int = None, run_page_size: int = None):
         history = list(reversed(self.get_data("history") or []))
@@ -813,6 +916,8 @@ class P115MediaOrganizer(_PluginBase):
     def list_dir_api(self, data: ListDirectoryRequest):
         path = str(data.path or "").strip()
         cid = str(data.cid or "").strip()
+        if self._active_operation or self._task.snapshot().get("status") in ("queued", "running", "stopping"):
+            return schemas.Response(success=False, message="任务运行中，请等待结束再浏览目录")
         p115 = self._p115_ops()
         if not p115.available:
             return schemas.Response(success=False, message=p115.import_error or "p115client不可用")
@@ -831,9 +936,12 @@ class P115MediaOrganizer(_PluginBase):
             return schemas.Response(success=False, message=str(err))
 
     def cookie_check_api(self, data: dict = None):
+        if self._active_operation:
+            return schemas.Response(success=False, message="任务运行中，请等待结束再检查连接")
         force = self._safe_bool((data or {}).get("force"), default=True)
         p115 = self._p115_ops()
         result = p115.health_check(force=force)
+        self.save_data("connection_health", result)
         return schemas.Response(success=bool(result.get("ok")), message=result.get("message"), data=result)
 
     def auto_run(self):
@@ -853,29 +961,7 @@ class P115MediaOrganizer(_PluginBase):
             self._notify_text("115云端媒体整理", f"dry-run完成，计划 {len(response.data or [])} 条")
 
     def _dry_run_for(self, media_type: str, save: bool = True):
-        logger.info(f"【115云端媒体整理】开始 {media_type} dry-run")
-        plan = []
-        remaining = max(0, self._max_items_per_run)
-        for source in self._source_mapping_list():
-            if source.get("media_type") != media_type:
-                continue
-            if self._max_items_per_run > 0 and remaining <= 0:
-                break
-            response = self._dry_run_source(
-                source,
-                save=False,
-                max_items=remaining if self._max_items_per_run > 0 else 0,
-            )
-            if not response.success:
-                return response
-            source_plan = response.data or []
-            plan.extend(source_plan)
-            if self._max_items_per_run > 0:
-                remaining -= len(source_plan)
-        if save:
-            self.save_data("last_plan", plan)
-        logger.info(f"【115云端媒体整理】{media_type} dry-run 完成：计划 {len(plan)} 条")
-        return schemas.Response(success=True, message=f"已生成{media_type}整理计划：{len(plan)} 条", data=plan)
+        return self._generate_plan(media_type=media_type, save=save)
 
     def _dry_run_source(
         self,
@@ -912,6 +998,7 @@ class P115MediaOrganizer(_PluginBase):
                 min_file_size=max(0, self._min_file_size_mb) * 1024 * 1024,
                 exclude_keywords=self._exclude_list(),
                 max_items=max(0, self._max_items_per_run if max_items is None else max_items),
+                checkpoint=self._checkpoint, report=self._report_scan,
             )
             logger.info(f"【115云端媒体整理】来源扫描完成：{source_path}，候选视频 {len(items)} 个")
             mapper = CategoryMapper(self._category_mapping_dict())
@@ -927,19 +1014,26 @@ class P115MediaOrganizer(_PluginBase):
                 self._config_snapshot(),
                 self.get_data("history") or [],
                 self._unrecognized_action,
-                source_root_cid=source_cid,
+                source_root_cid=source_cid, plan_id=self._scan_plan_id,
+                target_root_path=target_root_path, checkpoint=self._checkpoint,
+                progress=lambda done, name: self._progress(phase="recognizing", completed=done, total=len(items), message=f"识别 {done + 1}/{len(items)}：{name}"),
             )
             if save:
                 self.save_data("last_plan", plan)
             logger.info(f"【115云端媒体整理】来源计划生成完成：{source_path}，计划 {len(plan)} 条")
             return schemas.Response(success=True, message=f"已生成{media_type}整理计划：{len(plan)} 条", data=plan)
+        except TaskCancelled:
+            raise
         except Exception as err:
             logger.error(f"生成115整理计划失败：{err}\n{traceback.format_exc()}")
-            return schemas.Response(success=False, message=str(err))
+            return schemas.Response(success=False, message="生成预览失败，请查看扫描结果和插件日志；旧计划已失效")
 
     def _execute_guard(self, allow_dry_run: bool = False):
+        validation_config = self.validate_config_api()
+        if not validation_config.success:
+            return validation_config
         if self._dry_run and not allow_dry_run:
-            return schemas.Response(success=False, message="当前仍为dry_run=true，禁止执行移动")
+            return schemas.Response(success=False, message="定时任务设置为仅生成预览；手动执行请在插件页面确认")
         plan = self.get_data("last_plan") or []
         validation = validate_plan(
             plan,
@@ -951,6 +1045,9 @@ class P115MediaOrganizer(_PluginBase):
         p115 = self._p115_ops()
         if not p115.available:
             return schemas.Response(success=False, message=p115.import_error or "p115client不可用")
+        health = self.get_data("connection_health") or {}
+        if health.get("kind") in ("login", "dependency"):
+            return schemas.Response(success=False, message="115 连接不可用，请更新 Cookie 或修复依赖后重新检查连接")
         return None
 
     def _config_snapshot(self) -> Dict[str, Any]:
@@ -1007,44 +1104,24 @@ class P115MediaOrganizer(_PluginBase):
     def _category_mapping_dict(self) -> Dict[str, Dict[str, str]]:
         try:
             data = json.loads(self._category_mapping or "{}")
-            return data if isinstance(data, dict) else DEFAULT_CATEGORY_MAPPING
-        except Exception:
-            return DEFAULT_CATEGORY_MAPPING
+            return data if isinstance(data, dict) else {"movie": {}, "tv": {}}
+        except (ValueError, TypeError):
+            return {"movie": {}, "tv": {}}  # validate_config_api blocks malformed input
 
     def _target_cids_dict(self) -> Dict[str, Any]:
         try:
             data = json.loads(self._target_cids or "{}")
-            if not isinstance(data, dict):
-                return DEFAULT_TARGET_CIDS
-            return data if ("movie" in data or "tv" in data) else DEFAULT_TARGET_CIDS
-        except Exception:
-            return DEFAULT_TARGET_CIDS
+        except (ValueError, TypeError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        return {"movie": dict(data.get("movie") or {}) if isinstance(data.get("movie", {}), dict) else {},
+                "tv": dict(data.get("tv") or {}) if isinstance(data.get("tv", {}), dict) else {},
+                "unrecognized": data.get("unrecognized") or ""}
 
     def _source_mapping_list(self) -> List[Dict[str, str]]:
-        try:
-            data = json.loads(self._source_mappings or "[]")
-            mappings = data if isinstance(data, list) else []
-        except Exception:
-            mappings = []
-        if not mappings:
-            mappings = DEFAULT_SOURCE_MAPPINGS
-        normalized = []
-        for item in mappings:
-            if not isinstance(item, dict):
-                continue
-            media_type = str(item.get("media_type") or "").lower()
-            source_path = str(item.get("source_path") or "").strip()
-            target_root_path = str(item.get("target_root_path") or "").strip()
-            if media_type not in ("movie", "tv") or not source_path or not target_root_path:
-                continue
-            normalized.append({
-                "name": str(item.get("name") or source_path),
-                "media_type": media_type,
-                "source_path": source_path,
-                "target_root_path": target_root_path,
-            })
-        return normalized
-
+        check = check_configuration({"source_mappings": self._source_mappings})
+        return check.sources if check.valid else []
 
     def _record_outcome(self, item: Dict[str, Any], status: str, error: str,
                         run_id: str,
@@ -1061,6 +1138,10 @@ class P115MediaOrganizer(_PluginBase):
         record = self._history_record(item, status, error or "", run_id=run_id)
         history.append(record)
         run_history.append(record)
+        # Checkpoint each completed outcome, not only the end of a long task.
+        if getattr(self, "_execution_plan", None) is not None:
+            self.save_data("last_plan", self._execution_plan)
+            self.save_data("history", history[-max(1, self._history_limit):])
         if status == "executed":
             result.success += 1
             if success_items is not None:
@@ -1073,6 +1154,7 @@ class P115MediaOrganizer(_PluginBase):
             result.failed += 1
             result.errors.append({"source": item.get("source_name"), "error": error or ""})
             logger.info(f"【115云端媒体整理】执行失败：{item.get('source_name')}，原因：{error}")
+        self._progress(completed=result.success + result.failed + result.skipped, success=result.success, failed=result.failed)
 
     def _execute_group(self, p115: P115Ops,
                        items: List[Dict[str, Any]],
@@ -1351,6 +1433,8 @@ class P115MediaOrganizer(_PluginBase):
         # 1) 自底向上收集每个 source root 下的所有空目录 cid
         empty_cids_by_root: Dict[str, List[str]] = {}
         for source_cid in source_roots:
+            if self._task.cancel.is_set():
+                return cleaned
             empty_cids_by_root[source_cid] = list(
                 p115.list_empty_dirs_bottom_up(source_cid, max(0, self._max_depth) + 2)
             )
@@ -1358,6 +1442,8 @@ class P115MediaOrganizer(_PluginBase):
         batch_size = max(1, self._batch_size)
         for source_cid, empty_cids in empty_cids_by_root.items():
             for offset in range(0, len(empty_cids), batch_size):
+                if self._task.cancel.is_set():
+                    return cleaned
                 chunk = empty_cids[offset:offset + batch_size]
                 if not chunk:
                     continue
@@ -1385,8 +1471,8 @@ class P115MediaOrganizer(_PluginBase):
         # 配置变更走 init_plugin → 那里会把 _ops_instance 清空，下次调用自然重建。
         if self._ops_instance is None:
             self._ops_instance = P115Ops(
-                cookie_path=self._cookie_path,
-                cookie_text=self._cookie_text,
+                cookie_path=self._cookie_path if self._cookie_mode == "file" else "",
+                cookie_text=self._cookie_text if self._cookie_mode == "text" else "",
                 min_interval=self._min_request_interval_ms / 1000.0,
                 max_retries=self._max_retries,
                 retry_base=self._retry_base_seconds,
@@ -1484,10 +1570,10 @@ class P115MediaOrganizer(_PluginBase):
             category = str(item.get("target_category") or "").strip()
             if media_type not in ("movie", "tv") or not category:
                 continue
-            key = (media_type, category)
+            target_root_path = item.get("target_root_path") or roots_by_type.get(media_type) or ""
+            key = (media_type, category, target_root_path)
             if key in deduped:
                 continue
-            target_root_path = roots_by_type.get(media_type) or ""
             target_dir_path = f"{target_root_path.rstrip('/')}/{category}" if target_root_path else category
             target_path = f"{target_dir_path.rstrip('/')}/.p115_media_organizer_refresh"
             deduped[key] = {
@@ -1536,6 +1622,7 @@ class P115MediaOrganizer(_PluginBase):
             "time": started_at.strftime("%Y-%m-%d %H:%M:%S"),
             "finished_at": result.get("finished_at"),
             "duration_seconds": result.get("duration_seconds"),
+            "cancelled": result.get("cancelled", False),
             "source": result.get("trigger_source") or "manual",
             "plan_id": result.get("plan_id"),
             "total": result.get("total", 0),
@@ -1683,7 +1770,8 @@ class P115MediaOrganizer(_PluginBase):
             "unrecognized_action": "skip",
             "cookie_path": "/config/115-cookies.txt",
             "cookie_text": "",
-            "source_mappings": json.dumps(DEFAULT_SOURCE_MAPPINGS, ensure_ascii=False, indent=2),
+            "source_mappings": "[]",
+            "cookie_mode": "file",
             "exclude_keywords": "sample,trailer,花絮,预告",
             "category_mapping": json.dumps(DEFAULT_CATEGORY_MAPPING, ensure_ascii=False, indent=2),
             "target_cids": json.dumps(DEFAULT_TARGET_CIDS, ensure_ascii=False, indent=2),

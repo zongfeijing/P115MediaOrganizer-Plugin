@@ -14,6 +14,19 @@ https://github.com/zongfeijing/P115MediaOrganizer-Plugin
 
 MoviePilot V2 uses `package.v2.json` and `plugins.v2/p115mediaorganizer`. MoviePilot V3 uses `package.v3.json` and `plugins.v3/p115mediaorganizer`.
 
+## V3 usability workflow (v1.3.0)
+
+The V3 interface now provides visual source cards, saved-cookie directory browsing, strict configuration checks,
+background progress, safe stop at batch boundaries, one-use administrator execution confirmation, and searchable,
+paginated previews/history on both desktop and mobile. V2 is unchanged.
+
+1. Configure the connection and add source/target paths; save after format validation.
+2. Run **检查连接与目录**, then **生成预览** in the details page.
+3. Inspect the complete destination and skip reasons. **确认执行** applies to all eligible items, not just the visible page.
+4. A manual confirmation does not change the scheduled `dry_run` mode. External API execution remains opt-in.
+
+See the V3 plugin README for safety limits, upgrade notes and local UI testing.
+
 ## Configuration
 
 ### 115 Connection

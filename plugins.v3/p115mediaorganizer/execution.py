@@ -33,26 +33,26 @@ def validate_plan(
 ) -> PlanValidation:
     """校验计划完整性、配置快照、计划 ID 与有效期。"""
     if not plan:
-        return PlanValidation(False, "没有可执行的last_plan")
+        return PlanValidation(False, "尚未生成计划，请先点击“生成预览”")
 
     plan_ids = {str(item.get("plan_id") or "").strip() for item in plan}
     if "" in plan_ids or len(plan_ids) != 1:
-        return PlanValidation(False, "last_plan包含无效或不一致的plan_id，请重新dry-run")
+        return PlanValidation(False, "计划来源不一致，请重新生成预览")
 
     for item in plan:
         if item.get("config_snapshot") != config_snapshot:
-            return PlanValidation(False, "last_plan配置快照与当前配置不一致，请重新dry-run")
+            return PlanValidation(False, "目录或整理策略已修改，请重新生成预览")
 
     if not executable_plan_items(plan):
-        return PlanValidation(False, "最近一次计划已全部执行或跳过，请重新dry-run")
+        return PlanValidation(False, "本次计划已全部完成或跳过，请生成新的预览")
 
     ttl_seconds = max(1, int(ttl_hours)) * 3600
     created_epochs = [_created_epoch(item) for item in plan]
     if not all(created_epochs):
-        return PlanValidation(False, "last_plan缺少有效创建时间，请重新dry-run")
+        return PlanValidation(False, "旧计划缺少创建时间，请重新生成预览")
     now_epoch = time.time() if now_epoch is None else now_epoch
     if now_epoch - min(created_epochs) > ttl_seconds:
-        return PlanValidation(False, f"last_plan已超过{max(1, int(ttl_hours))}小时，请重新dry-run")
+        return PlanValidation(False, f"计划已超过{max(1, int(ttl_hours))}小时有效期，请重新生成预览")
     return PlanValidation(True)
 
 

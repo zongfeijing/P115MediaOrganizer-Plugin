@@ -70,7 +70,7 @@ class V3ContractTest(unittest.TestCase):
         declared_version = ast.literal_eval(version_node.value)
         self.assertEqual(v3["P115MediaOrganizer"]["version"], declared_version)
         self.assertIn(f"v{declared_version}", v3["P115MediaOrganizer"]["history"])
-        self.assertEqual(v3["P115MediaOrganizer"]["system_version"], ">=3.0.0")
+        self.assertEqual(v3["P115MediaOrganizer"]["system_version"], ">=3.1.1")
 
     def test_p115client_transitive_dependency_is_pinned_to_compatible_api(self):
         manifest = tomllib.loads((PLUGIN_DIR / "pyproject.toml").read_text())

@@ -4,6 +4,7 @@ import random
 import re
 import time
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any, Callable, Dict, Iterable, List, Optional
@@ -74,6 +75,7 @@ class P115Ops:
         self._cookie_alive: Optional[bool] = None
         self._last_health_msg = ""
         self._last_health_at = 0.0
+        self._health_kind = "unknown"
 
         self._init_client()
 
@@ -101,6 +103,8 @@ class P115Ops:
             return
         try:
             self.client = self._construct_client(P115Client)
+            if self.client is not None and callable(getattr(self.client, "request", None)):
+                self.client.request = partial(self.client.request, timeout=20)
         except Exception as err:
             self.import_error = f"p115client初始化失败：{err}"
 
@@ -209,6 +213,8 @@ class P115Ops:
                 result = fn(*args, **kwargs)
                 self._raise_if_failed(result)
                 self._cookie_alive = True
+                self._health_kind = "healthy"
+                self._last_health_msg = "连接正常，Cookie 有效"
                 return result
             except TypeError:
                 # 签名不匹配，交给上层探测
@@ -218,7 +224,8 @@ class P115Ops:
                 kind = self._classify_error(exc)
                 if kind == "login":
                     self._cookie_alive = False
-                    self._last_health_msg = f"Cookie 失效：{exc}"
+                    self._health_kind = "login"
+                    self._last_health_msg = "Cookie 失效，请更新 Cookie 后重新检查连接"
                     self._last_health_at = time.time()
                     raise P115UnavailableError(self._last_health_msg)
                 if kind != "retry" or attempt >= effective_retries:
@@ -242,6 +249,7 @@ class P115Ops:
                 "ok": False,
                 "message": self.import_error or "p115client不可用",
                 "checked_at": "",
+                "kind": "dependency" if "导入" in self.import_error else "configuration",
             }
         now = time.time()
         if (not force
@@ -267,22 +275,32 @@ class P115Ops:
                 except TypeError:
                     self._call("health_check.fs_files", fs_files, 0, retries=1)
             self._cookie_alive = True
-            self._last_health_msg = "Cookie 正常"
+            self._last_health_msg = "连接正常，Cookie 有效"
+            self._health_kind = "healthy"
         except P115UnavailableError as exc:
             kind = self._classify_error(exc)
-            self._cookie_alive = False
-            self._last_health_msg = (
-                f"Cookie 失效：{exc}" if kind == "login" else f"健康检查失败：{exc}"
-            )
+            self._cookie_alive = False if kind == "login" else None
+            self._health_kind = "login" if kind == "login" else ("rate_limit" if kind == "retry" else "network")
+            self._last_health_msg = {
+                "login": "Cookie 失效，请更新 Cookie 后重新检查连接",
+                "rate_limit": "115 暂时限频，请稍后重试；不要连续点击，无需立即更换 Cookie",
+                "network": "115 连接失败，请检查网络或代理；暂时无法判断 Cookie 是否有效",
+            }[self._health_kind]
         except Exception as exc:
-            self._cookie_alive = False
-            self._last_health_msg = f"健康检查失败：{exc}"
+            self._cookie_alive = None
+            self._health_kind = "network"
+            self._last_health_msg = "115 连接失败，请检查网络或代理；暂时无法判断 Cookie 是否有效"
         self._last_health_at = time.time()
+        return self._health_payload()
+
+    def cached_health(self) -> Dict[str, Any]:
+        """Return last-known health without making any request."""
         return self._health_payload()
 
     def _health_payload(self) -> Dict[str, Any]:
         return {
-            "ok": bool(self._cookie_alive),
+            "ok": self._cookie_alive,
+            "kind": getattr(self, "_health_kind", "unknown"),
             "message": self._last_health_msg or ("Cookie 正常" if self._cookie_alive else "Cookie 未检查"),
             "checked_at": (datetime.fromtimestamp(self._last_health_at).strftime("%Y-%m-%d %H:%M:%S")
                            if self._last_health_at else ""),
@@ -364,6 +382,8 @@ class P115Ops:
         min_file_size: int = 0,
         exclude_keywords: Optional[Iterable[str]] = None,
         max_items: int = 0,
+        checkpoint: Optional[Callable] = None,
+        report: Optional[Callable] = None,
     ) -> List[MediaItem]:
         items: List[MediaItem] = []
         excludes = [keyword.lower() for keyword in (exclude_keywords or []) if keyword]
@@ -372,9 +392,13 @@ class P115Ops:
             if max_items and len(items) >= max_items:
                 return
             if depth > max_depth:
+                if report:
+                    report({"path_hint": current_path, "status": "skipped", "reason": "超过最大扫描深度"})
                 return
             iterator = iter(self.iter_entries(cid))
             while not max_items or len(items) < max_items:
+                if checkpoint:
+                    checkpoint()
                 try:
                     entry = next(iterator)
                 except StopIteration:
@@ -384,6 +408,8 @@ class P115Ops:
                         f"【115云端媒体整理】列出目录失败，跳过该子树："
                         f"path={current_path}，原因：{err}"
                     )
+                    if report:
+                        report({"path_hint": current_path, "status": "failed", "reason": "目录读取失败，请检查路径、网络与账号权限"})
                     return
                 name = self.entry_name(entry)
                 if not name:
@@ -392,16 +418,24 @@ class P115Ops:
                 path_hint = str(PurePosixPath(current_path) / name)
                 if is_dir:
                     if name in SKIP_DIR_NAMES:
+                        if report:
+                            report({"source_name": name, "path_hint": path_hint, "status": "skipped", "reason": "系统或已分类目录"})
                         continue
                     walk(self.entry_cid(entry), path_hint, depth + 1)
                     continue
 
                 ext = PurePosixPath(name).suffix.lower()
                 if ext not in VIDEO_EXTENSIONS:
+                    if report:
+                        report({"source_name": name, "path_hint": path_hint, "status": "skipped", "reason": "非视频文件"})
                     continue
                 if self.entry_size(entry) < min_file_size:
+                    if report:
+                        report({"source_name": name, "path_hint": path_hint, "status": "skipped", "reason": "文件小于最小体积"})
                     continue
                 if any(keyword in path_hint.lower() for keyword in excludes):
+                    if report:
+                        report({"source_name": name, "path_hint": path_hint, "status": "skipped", "reason": "匹配排除关键词"})
                     continue
                 items.append(self._to_media_item(entry, cid, path_hint))
 

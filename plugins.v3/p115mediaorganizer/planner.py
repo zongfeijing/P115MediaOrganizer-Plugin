@@ -44,20 +44,25 @@ class Planner:
         history: List[Dict[str, Any]],
         unrecognized_action: str = "skip",
         source_root_cid: str = "",
+        plan_id: str = "",
+        target_root_path: str = "",
+        progress: Optional[Callable] = None,
+        checkpoint: Optional[Callable] = None,
     ) -> List[Dict[str, Any]]:
-        plan_id = uuid.uuid4().hex
+        plan_id = plan_id or uuid.uuid4().hex
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         plans: List[Dict[str, Any]] = []
         history_keys = self._history_keys(history)
 
-        for item in items:
+        for index, item in enumerate(items):
+            if checkpoint:
+                checkpoint()
+            if progress:
+                progress(index, item.name)
             item_key = self._item_key(item)
-            if item_key in history_keys:
-                continue
+            already_processed = item_key in history_keys
             warnings: List[str] = []
-            mediainfo, meta = self._recognize(media_type, item.path_hint, warnings)
-            if not mediainfo and unrecognized_action == "skip":
-                continue
+            mediainfo, meta = (None, None) if already_processed else self._recognize(media_type, item.path_hint, warnings)
 
             title = self._first_attr(mediainfo, ("title", "name", "original_title")) or PurePosixPath(item.name).stem
             year = self._first_attr(mediainfo, ("year", "release_year")) or self._extract_year(item.path_hint)
@@ -69,7 +74,7 @@ class Planner:
                 warnings.extend(category_warning.split("；"))
 
             target_parent = self.target_cids.get(media_type, {}).get(target_category, "")
-            if not target_parent and self.target_resolver and target_category:
+            if not target_parent and self.target_resolver and target_category and mediainfo:
                 try:
                     target_parent = self.target_resolver(media_type, target_category) or ""
                 except Exception as err:
@@ -90,6 +95,12 @@ class Planner:
                         warnings.append("未配置未识别目录CID，已跳过")
                 status = "skipped" if action == "skip" else "planned"
 
+            if already_processed:
+                action, status = "skip", "skipped"
+                warnings = ["此前已成功整理，跳过重复处理"]
+            elif not mediainfo and action == "skip":
+                warnings.append("未识别到媒体，保留源文件；可调整文件名后重新生成计划")
+
             if action == "move" and not target_parent:
                 action = "skip"
                 status = "skipped"
@@ -108,8 +119,13 @@ class Planner:
                 warnings=warnings,
             )
 
-            target_path = str(PurePosixPath(target_category) / target_dir_name / (target_season_dir_name or "") / target_name)
-            target_path = target_path.replace("//", "/")
+            target_path = str(PurePosixPath(target_root_path) / target_category / target_dir_name / (target_season_dir_name or "") / target_name)
+            if action == "skip" and not mediainfo:
+                target_path = ""
+            elif not mediainfo and target_parent:
+                target_path = f"115://cid/{target_parent}/{target_dir_name}/{target_name}"
+            if not target_path.startswith("115://"):
+                target_path = target_path.replace("//", "/")
             plans.append(OrganizePlan(
                 plan_id=plan_id,
                 item_id=item_key,
@@ -146,6 +162,7 @@ class Planner:
                 error=None,
                 recognition_source="MoviePilot" if mediainfo else "none",
                 confidence=confidence,
+                target_root_path=target_root_path,
                 warnings=warnings,
             ).to_dict())
         # 给每个 plan item 打上 batch_group_key + 同组内的 batch_index，
