@@ -1,0 +1,34 @@
+
+.p115-config[data-v-4eed2c1a] {
+  max-width: 1000px;
+  margin: auto;
+  min-width: 0;
+}
+.min-width-0[data-v-4eed2c1a] {
+  min-width: 0;
+}
+.p115-wrap[data-v-4eed2c1a] {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.p115-source[data-v-4eed2c1a] {
+  min-width: 0;
+}
+.p115-directory-list[data-v-4eed2c1a] {
+  max-height: 260px;
+  overflow: auto;
+}
+.p115-config-footer[data-v-4eed2c1a] {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: rgb(var(--v-theme-surface));
+}
+.p115-json[data-v-4eed2c1a] textarea {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+@media (max-width: 600px) {
+.p115-config-footer[data-v-4eed2c1a] .v-card-actions {
+    flex-wrap: wrap;
+}
+}

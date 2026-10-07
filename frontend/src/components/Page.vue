@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { icons } from "../icons";
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { client, stateLabels, type HostProps } from "../api";
+import RecordList from "./RecordList.vue";
 const props = defineProps<HostProps>();
 const emit = defineEmits(["action", "switch", "close"]);
 const api = client(props);
@@ -39,7 +41,7 @@ async function loadRecords() {
     const data = await api.get("records", {
       kind: kind.value,
       status: filter.value,
-      query: query.value,
+      query: query.value || "",
       page: page.value,
       page_size: 20,
     });
@@ -77,6 +79,41 @@ async function run(action: string, body: any = {}) {
   } finally {
     submitting.value = false;
   }
+}
+const connectionDetails = ref(false);
+const tabs = [
+  { value: "plan", title: "本次预览" },
+  { value: "history", title: "整理历史" },
+  { value: "runs", title: "执行批次" },
+  { value: "scan", title: "扫描诊断" },
+];
+const statusOptions = [
+  { title: "全部状态", value: "" },
+  { title: "待执行", value: "planned" },
+  { title: "已执行", value: "executed" },
+  { title: "失败", value: "failed" },
+  { title: "跳过", value: "skipped" },
+  { title: "已停止", value: "cancelled" },
+];
+const connectionColor = computed(() =>
+  workflow.value?.connection?.ok === true
+    ? "success"
+    : ["login", "dependency"].includes(workflow.value?.connection?.kind)
+      ? "error"
+      : "warning",
+);
+const connectionLabel = computed(() =>
+  workflow.value?.connection?.ok === true
+    ? "连接正常"
+    : ["login", "dependency"].includes(workflow.value?.connection?.kind)
+      ? "连接不可用"
+      : "连接待检查",
+);
+const hasPlan = computed(() => currentPlan.value?.valid);
+const canMutate = computed(() => !busy.value && !submitting.value);
+async function primaryAction() {
+  if (hasPlan.value) await prepare();
+  else await run("tasks/start", { kind: "scan" });
 }
 async function prepare() {
   submitting.value = true;
@@ -130,419 +167,446 @@ onBeforeUnmount(() => {
   clearTimeout(searchTimer);
   generation++;
 });
-function name(row: any) {
-  return row.source_name || row.title || row.run_id || row.path_hint || "记录";
-}
-function warnings(row: any) {
-  return row.reason || row.error || (row.warnings || []).join("；");
-}
 function timeLabel(epoch: number) {
   return epoch ? new Date(epoch * 1000).toLocaleString("zh-CN") : "—";
 }
 </script>
 <template>
-  <section class="p115-page">
-    <header class="p115-toolbar">
-      <div>
-        <h2>115 云端媒体整理</h2>
-        <p>检查配置 → 生成预览 → 确认执行</p>
+  <section class="p115-page pa-4 pa-sm-6">
+    <div class="d-flex align-center ga-3 mb-4">
+      <VAvatar color="primary" variant="tonal" rounded="lg" size="42"
+        ><VIcon :icon="icons.mdiCloudCheckOutline"
+      /></VAvatar>
+      <div class="flex-grow-1 min-width-0">
+        <h2 class="text-h6">115 云端媒体整理</h2>
+        <div class="text-caption text-medium-emphasis">
+          在云端整理媒体，不下载文件
+        </div>
       </div>
-      <button @click="emit('switch')" :disabled="busy">配置</button
-      ><button @click="refresh" :disabled="loading">刷新</button>
-    </header>
-    <p v-if="error" class="p115-alert danger" role="alert">{{ error }}</p>
+      <VTooltip text="配置"
+        ><template #activator="{ props: tip }"
+          ><VBtn
+            v-bind="tip"
+            :icon="icons.mdiCogOutline"
+            variant="text"
+            color="secondary"
+            size="small"
+            aria-label="配置"
+            :disabled="busy"
+            @click="emit('switch')" /></template
+      ></VTooltip>
+      <VTooltip text="刷新状态"
+        ><template #activator="{ props: tip }"
+          ><VBtn
+            v-bind="tip"
+            :icon="icons.mdiRefresh"
+            variant="text"
+            color="secondary"
+            size="small"
+            aria-label="刷新状态"
+            :loading="loading"
+            @click="refresh" /></template
+      ></VTooltip>
+      <VTooltip text="关闭"
+        ><template #activator="{ props: tip }"
+          ><VBtn
+            v-bind="tip"
+            :icon="icons.mdiClose"
+            variant="text"
+            color="secondary"
+            size="small"
+            aria-label="关闭"
+            @click="emit('close')" /></template
+      ></VTooltip>
+    </div>
+    <VAlert
+      v-if="error"
+      type="error"
+      variant="tonal"
+      density="compact"
+      class="mb-4"
+      closable
+      role="alert"
+      @click:close="error = ''"
+      >{{ error }}</VAlert
+    >
     <template v-if="workflow">
-      <div class="p115-steps" aria-label="整理流程">
-        <div :class="{ ready: valid }">
-          <b>1. 配置检查</b
-          ><span>{{ valid ? "配置格式通过" : "请先修正配置" }}</span>
-        </div>
-        <div :class="{ ready: currentPlan?.valid }">
-          <b>2. 生成预览</b
-          ><span
-            >{{ currentPlan?.count || 0 }} 条 · 待执行
-            {{ currentPlan?.executable || 0 }}</span
-          >
-        </div>
-        <div><b>3. 确认执行</b><span>按确认摘要整理，定时模式不变</span></div>
-      </div>
-      <div v-if="!valid" class="p115-alert danger">
-        <ul>
+      <VAlert
+        v-if="!valid"
+        type="warning"
+        variant="tonal"
+        density="compact"
+        class="mb-4"
+        role="alert"
+      >
+        <div class="font-weight-medium">完成配置后再生成预览</div>
+        <ul class="ps-4 my-2">
           <li v-for="e in workflow.configuration.errors" :key="e">{{ e }}</li>
         </ul>
-        <button @click="emit('switch')">去修正配置</button>
+        <VBtn size="small" variant="tonal" @click="emit('switch')">去配置</VBtn>
+      </VAlert>
+      <div class="d-flex align-center flex-wrap ga-2 mb-4">
+        <VChip
+          :color="connectionColor"
+          size="small"
+          variant="tonal"
+          :prepend-icon="
+            workflow.connection.ok === true
+              ? icons.mdiCheckCircleOutline
+              : icons.mdiCloudAlertOutline
+          "
+          >{{ connectionLabel }}</VChip
+        >
+        <VChip
+          size="small"
+          color="secondary"
+          variant="tonal"
+          :prepend-icon="icons.mdiCalendarClock"
+          >{{
+            workflow.configuration.preview_only ? "定时仅预览" : "定时自动执行"
+          }}</VChip
+        >
+        <VSpacer />
+        <VBtn
+          size="small"
+          color="secondary"
+          variant="text"
+          :append-icon="
+            connectionDetails ? icons.mdiChevronUp : icons.mdiChevronDown
+          "
+          @click="connectionDetails = !connectionDetails"
+          >连接详情</VBtn
+        >
       </div>
-      <div
-        class="p115-connection"
-        :class="{
-          'p115-alert': true,
-          danger:
-            workflow.connection.kind === 'login' ||
-            workflow.connection.kind === 'dependency',
-        }"
+      <VAlert
+        v-if="
+          ['login', 'dependency', 'network', 'rate_limit'].includes(
+            workflow.connection.kind,
+          )
+        "
+        :type="connectionColor === 'error' ? 'error' : 'warning'"
+        variant="tonal"
+        density="compact"
+        class="mb-4"
+        >{{ workflow.connection.message }}</VAlert
       >
-        <b>{{
-          workflow.connection.ok === true ? "115 连接正常" : "连接状态"
-        }}</b>
-        · {{ workflow.connection.message }}
-        <small
-          >当前使用：{{
-            workflow.configuration.cookie_mode === "text"
-              ? "Cookie 文本"
-              : "Cookie 文件"
-          }}
-          · 客户端 {{ workflow.versions.p115client || "未安装" }} · 并发库
-          {{ workflow.versions["python-concurrenttools"] || "未安装" }}</small
+      <VCard v-if="connectionDetails" variant="tonal" class="mb-4">
+        <VCardText class="pa-4">
+          <div class="text-body-2 mb-2">{{ workflow.connection.message }}</div>
+          <div class="text-caption text-medium-emphasis mb-3">
+            {{
+              workflow.configuration.cookie_mode === "text"
+                ? "使用 Cookie 文本"
+                : "使用 Cookie 文件"
+            }}
+            · 客户端 {{ workflow.versions.p115client || "未安装" }} · 并发库
+            {{ workflow.versions["python-concurrenttools"] || "未安装" }}
+          </div>
+          <div
+            v-for="r in workflow.path_checks || []"
+            :key="r.path"
+            class="d-flex align-start ga-2 mb-2 text-body-2"
+          >
+            <VIcon
+              :icon="
+                r.ok ? icons.mdiCheckCircleOutline : icons.mdiAlertCircleOutline
+              "
+              :color="r.ok ? 'success' : 'warning'"
+              size="18"
+            /><span class="p115-path">{{ r.path }} {{ r.message || "" }}</span>
+          </div>
+          <VBtn
+            variant="tonal"
+            size="small"
+            :prepend-icon="icons.mdiConnection"
+            :disabled="!valid || !canMutate"
+            :loading="submitting"
+            @click="run('tasks/start', { kind: 'check' })"
+            >检查连接与目录</VBtn
+          >
+        </VCardText>
+      </VCard>
+      <VRow dense class="mb-4">
+        <VCol cols="4"
+          ><div class="p115-stat">
+            <div class="text-caption text-medium-emphasis">待执行</div>
+            <div class="text-h5 text-primary">
+              {{ currentPlan?.executable || 0 }}
+            </div>
+          </div></VCol
         >
-      </div>
-      <ul v-if="workflow.path_checks?.length" class="p115-paths">
-        <li v-for="r in workflow.path_checks" :key="r.path">
-          {{ r.ok ? "✓" : "✗" }} {{ r.path }} {{ r.message || "" }}
-        </li>
-      </ul>
-      <div class="p115-actions">
-        <button
-          @click="run('tasks/start', { kind: 'check' })"
-          :disabled="!valid || busy || submitting"
+        <VCol cols="4"
+          ><div class="p115-stat">
+            <div class="text-caption text-medium-emphasis">已完成</div>
+            <div class="text-h5">{{ currentPlan?.counts?.executed || 0 }}</div>
+          </div></VCol
         >
-          检查连接与目录
-        </button>
-        <button
-          class="primary"
+        <VCol cols="4"
+          ><div class="p115-stat">
+            <div class="text-caption text-medium-emphasis">需处理</div>
+            <div
+              class="text-h5"
+              :class="currentPlan?.counts?.failed || 0 ? 'text-warning' : ''"
+            >
+              {{ currentPlan?.counts?.failed || 0 }}
+            </div>
+          </div></VCol
+        >
+      </VRow>
+      <div class="d-flex flex-wrap align-center ga-2 mb-2">
+        <VBtn
+          color="primary"
+          variant="flat"
+          :prepend-icon="
+            hasPlan ? icons.mdiPlayOutline : icons.mdiFileSearchOutline
+          "
+          :loading="submitting"
+          :disabled="!valid || !canMutate"
+          @click="primaryAction"
+          >{{
+            hasPlan
+              ? `确认执行 ${currentPlan.executable} 个文件`
+              : currentPlan?.count
+                ? "重新生成预览"
+                : "生成预览"
+          }}</VBtn
+        >
+        <VBtn
+          v-if="hasPlan"
+          variant="tonal"
+          color="secondary"
+          :prepend-icon="icons.mdiRefresh"
+          :disabled="!canMutate"
           @click="run('tasks/start', { kind: 'scan' })"
-          :disabled="!valid || busy || submitting"
+          >重新生成预览</VBtn
         >
-          {{ currentPlan?.count ? "重新生成预览" : "生成预览" }}
-        </button>
-        <button
-          class="danger-button"
-          @click="prepare"
-          :disabled="!currentPlan?.valid || busy || submitting"
+        <span v-if="!valid" class="text-caption text-medium-emphasis"
+          >配置 → 预览 → 确认</span
         >
-          确认执行 {{ currentPlan?.executable || 0 }} 个文件
-        </button>
       </div>
-      <p v-if="!currentPlan?.valid" class="p115-note">
-        {{ currentPlan?.reason }}
+      <p
+        v-if="currentPlan?.count && !currentPlan.valid"
+        class="text-caption text-medium-emphasis mb-4"
+      >
+        {{ currentPlan.reason }}
       </p>
-      <p v-else class="p115-note">
+      <p
+        v-else-if="currentPlan?.valid"
+        class="text-caption text-medium-emphasis mb-4"
+      >
         生成于 {{ currentPlan.created_at }} · 有效至
         {{
           timeLabel(currentPlan.expires_at)
-        }}。执行全部待处理项，不仅是当前页。
+        }}。执行全部有效项目，不仅是当前页。
       </p>
-      <div
+      <p v-else class="text-caption text-medium-emphasis mb-4">
+        先生成预览，核对名称与目标目录，再确认执行。
+      </p>
+      <VCard
         v-if="prepared && !confirm"
-        class="p115-alert danger"
+        variant="tonal"
+        color="warning"
+        class="mb-4"
         role="alertdialog"
         aria-label="执行确认"
       >
-        <h3>执行前确认</h3>
-        <p>
-          执行 {{ prepared.count }} 个文件，含失败重试
-          {{ prepared.retry_count }} 个；跳过 {{ prepared.skip_count }} 个。
-        </p>
-        <p>
-          目标：{{ prepared.targets.join("、") }}。{{
-            prepared.delete_empty_dirs
-              ? "将清理成功整理来源中的空目录。"
-              : "不清理空目录。"
-          }}
-          已开始的移动无法一键撤销。
-        </p>
-        <button class="danger-button" @click="execute" :disabled="submitting">
-          我已核对，确认执行</button
-        ><button @click="prepared = null">取消</button>
-      </div>
-      <section class="p115-task" aria-live="polite">
-        <b>{{ stateLabels[workflow.task.status] || workflow.task.status }}</b> ·
-        {{ workflow.task.message }}
-        <progress
-          v-if="busy && progress !== null"
-          :value="progress"
-          max="100"
-          :aria-label="`任务进度 ${progress}%`"
-        ></progress>
-        <small v-if="workflow.task.updated_at"
-          >最近活动 {{ timeLabel(workflow.task.updated_at)
-          }}{{
-            workflow.task.discovered
-              ? ` · 已检查 ${workflow.task.discovered} 条`
-              : ""
-          }}</small
+        <VCardText
+          ><div class="text-subtitle-1 font-weight-medium mb-2">执行前确认</div>
+          <p>
+            执行 {{ prepared.count }} 个文件，含失败重试
+            {{ prepared.retry_count }} 个；跳过 {{ prepared.skip_count }} 个。
+          </p>
+          <p class="p115-path mt-2">
+            目标：{{ prepared.targets.join("、") }}。{{
+              prepared.delete_empty_dirs
+                ? "将清理成功整理来源中的空目录。"
+                : "不清理空目录。"
+            }}
+          </p>
+          <p class="text-caption mt-2">
+            已开始的移动无法一键撤销；定时运行模式不会改变。
+          </p></VCardText
         >
-        <button
-          v-if="busy"
-          @click="run('tasks/stop')"
-          :disabled="submitting || workflow.task.status === 'stopping'"
+        <VCardActions
+          ><VSpacer /><VBtn
+            variant="text"
+            color="secondary"
+            @click="prepared = null"
+            >取消</VBtn
+          ><VBtn
+            color="primary"
+            variant="flat"
+            :loading="submitting"
+            @click="execute"
+            >我已核对，确认执行</VBtn
+          ></VCardActions
         >
-          完成当前批次后停止
-        </button>
-        <p v-if="busy" class="p115-note">
-          可以关闭页面，任务仍在后台运行；停止会保留已完成项目。
-        </p>
-      </section>
-      <div v-if="result?.run_id" class="p115-summary">
-        <b>上次执行</b><span>成功 {{ result.success }}</span
-        ><span>失败 {{ result.failed }}</span
-        ><span>跳过 {{ result.skipped }}</span
-        ><span>剩余 {{ result.remaining || 0 }}</span>
-      </div>
-      <p v-if="workflow.scan_summary.limit_reached" class="p115-alert">
-        本次达到扫描上限，后面的文件可能尚未检查；整理本次后可再次生成预览，或调整单次上限。
-      </p>
-      <details v-if="workflow.scan_summary.record_count">
-        <summary>
-          扫描说明：共 {{ workflow.scan_summary.record_count }} 条记录
-        </summary>
-        <ul>
-          <li
-            v-for="(count, reason) in workflow.scan_summary.counts"
-            :key="reason"
-          >
-            {{ reason }}：{{ count }}
-          </li>
-        </ul>
-        <p>扫描诊断最多保留 5000 条，计数覆盖全部。</p>
-      </details>
-      <div class="p115-filters">
-        <label
-          >记录<select v-model="kind">
-            <option value="plan">本次预览</option>
-            <option value="scan">扫描与跳过原因</option>
-            <option value="history">整理历史</option>
-            <option value="runs">执行批次</option>
-          </select></label
-        >
-        <label
-          >状态<select v-model="filter">
-            <option value="">全部</option>
-            <option value="planned">待执行</option>
-            <option value="executed">已执行</option>
-            <option value="failed">失败</option>
-            <option value="skipped">跳过</option>
-          </select></label
-        >
-        <label
-          >搜索<input v-model="query" placeholder="文件名、路径、错误或批次 ID"
-        /></label>
-      </div>
-      <nav
-        v-if="pagination.total_pages > 1"
-        class="p115-pager"
-        aria-label="顶部记录分页"
+      </VCard>
+      <VCard
+        v-if="busy || ['failed', 'cancelled'].includes(workflow.task.status)"
+        variant="tonal"
+        class="mb-4"
+        aria-live="polite"
       >
-        <button :disabled="page <= 1" @click="page--">上一页</button>
-        <span>第 {{ pagination.page }} / {{ pagination.total_pages }} 页</span>
-        <button :disabled="page >= pagination.total_pages" @click="page++">
-          下一页
-        </button>
-      </nav>
-      <div v-if="records.length" class="p115-records">
-        <article v-for="(r, i) in records" :key="`${kind}-${page}-${i}`">
-          <header>
-            <b>{{
-              stateLabels[r.status] || (kind === "runs" ? "执行批次" : "记录")
-            }}</b
-            ><time>{{ r.time || r.created_at || "" }}</time>
-          </header>
-          <strong class="p115-filename">{{ name(r) }}</strong>
-          <p v-if="r.title && r.source_name">
-            识别为：{{ r.title }} {{ r.year || "" }}
-            {{ r.season ? `第 ${r.season} 季` : "" }}
-            {{ r.episode ? `第 ${r.episode} 集` : "" }}
-          </p>
-          <p v-if="r.target_path" class="p115-path">→ {{ r.target_path }}</p>
-          <p v-else-if="r.target_name">
-            → {{ r.target_category }} / {{ r.target_name }}
-          </p>
-          <p v-if="warnings(r)" class="p115-warning">{{ warnings(r) }}</p>
-          <small v-if="r.path_hint && kind === 'scan'">{{ r.path_hint }}</small>
-          <p v-if="kind === 'runs'">
-            成功 {{ r.success }} · 失败 {{ r.failed }} · 跳过
-            {{ r.skipped }}（共 {{ r.total }}）
-          </p>
-          <small v-if="r.run_id">批次 {{ r.run_id }}</small>
-        </article>
+        <VCardText
+          ><div class="d-flex align-center ga-2 mb-2">
+            <VChip
+              size="small"
+              :color="workflow.task.status === 'failed' ? 'error' : 'primary'"
+              >{{
+                stateLabels[workflow.task.status] || workflow.task.status
+              }}</VChip
+            ><span class="text-body-2 p115-path">{{
+              workflow.task.message
+            }}</span>
+          </div>
+          <VProgressLinear
+            v-if="busy"
+            :model-value="progress || 0"
+            :indeterminate="progress === null"
+            color="primary"
+            rounded
+            height="6"
+            class="my-3"
+            :aria-label="`任务进度 ${progress ?? 0}%`"
+          />
+          <div class="d-flex flex-wrap align-center ga-2">
+            <span class="text-caption text-medium-emphasis"
+              >最近活动 {{ timeLabel(workflow.task.updated_at)
+              }}{{
+                workflow.task.discovered
+                  ? ` · 已检查 ${workflow.task.discovered} 条`
+                  : ""
+              }}</span
+            ><VSpacer /><VBtn
+              v-if="busy"
+              variant="text"
+              color="warning"
+              size="small"
+              :prepend-icon="icons.mdiStopCircleOutline"
+              :disabled="submitting || workflow.task.status === 'stopping'"
+              @click="run('tasks/stop')"
+              >完成当前批次后停止</VBtn
+            >
+          </div>
+          <div v-if="busy" class="text-caption text-medium-emphasis mt-2">
+            可关闭页面，任务仍在后台运行；停止会保留已完成项目。
+          </div>
+        </VCardText>
+      </VCard>
+      <div
+        v-else-if="workflow.task.status === 'completed'"
+        class="text-caption text-medium-emphasis mb-4"
+      >
+        <VIcon
+          :icon="icons.mdiCheckCircleOutline"
+          color="success"
+          size="16"
+          class="me-1"
+        />{{ workflow.task.message }}
       </div>
-      <p v-else class="p115-empty">
-        暂无符合条件的记录。可切换记录类型或清除筛选。
-      </p>
-      <nav class="p115-pager" aria-label="记录分页">
-        <button :disabled="page <= 1" @click="page--">上一页</button
-        ><span
-          >第 {{ pagination.page }} / {{ pagination.total_pages || 1 }} 页 · 共
-          {{ pagination.total }} 条</span
-        ><button :disabled="page >= pagination.total_pages" @click="page++">
-          下一页
-        </button>
-      </nav>
+      <VAlert
+        v-if="workflow.scan_summary.limit_reached"
+        type="info"
+        variant="tonal"
+        density="compact"
+        class="mb-4"
+        >本次达到扫描上限，后面的文件可能尚未检查；整理后可再次生成预览。</VAlert
+      >
+      <VTabs v-model="kind" density="comfortable" show-arrows class="mb-4"
+        ><VTab v-for="tab in tabs" :key="tab.value" :value="tab.value">{{
+          tab.title
+        }}</VTab></VTabs
+      >
+      <VRow dense class="mb-3"
+        ><VCol cols="12" sm="8"
+          ><VTextField
+            v-model="query"
+            density="compact"
+            label="搜索记录"
+            placeholder="文件名、路径、错误或批次 ID"
+            :prepend-inner-icon="icons.mdiMagnify"
+            clearable
+            hide-details
+            @click:clear="query = ''" /></VCol
+        ><VCol cols="12" sm="4"
+          ><VSelect
+            v-model="filter"
+            :items="statusOptions"
+            label="状态"
+            density="compact"
+            hide-details /></VCol
+      ></VRow>
+      <VExpansionPanels
+        v-if="kind === 'scan' && workflow.scan_summary.record_count"
+        variant="accordion"
+        class="mb-4"
+        ><VExpansionPanel title="扫描统计"
+          ><VExpansionPanelText
+            ><div class="d-flex flex-wrap ga-2 mb-2">
+              <VChip
+                v-for="(count, reason) in workflow.scan_summary.counts"
+                :key="reason"
+                size="small"
+                variant="tonal"
+                >{{ reason }} · {{ count }}</VChip
+              >
+            </div>
+            <p class="text-caption text-medium-emphasis">
+              诊断最多保留 5000 条，汇总计数覆盖全部。
+            </p></VExpansionPanelText
+          ></VExpansionPanel
+        ></VExpansionPanels
+      >
+      <RecordList :records="records" :kind="kind" />
+      <div
+        class="p115-pagination d-flex flex-wrap align-center justify-center ga-2 mt-4"
+      >
+        <span class="text-caption text-medium-emphasis"
+          >共 {{ pagination.total }} 条 · 第 {{ pagination.page }} /
+          {{ pagination.total_pages || 1 }} 页</span
+        ><VPagination
+          v-model="page"
+          :length="pagination.total_pages || 1"
+          :total-visible="3"
+          density="compact"
+          :disabled="loading"
+          aria-label="记录分页"
+        />
+      </div>
+      <div v-if="result?.run_id" class="text-caption text-medium-emphasis mt-4">
+        上次执行：成功 {{ result.success }} · 失败 {{ result.failed }} · 跳过
+        {{ result.skipped }} · 剩余 {{ result.remaining || 0 }}
+      </div>
     </template>
-    <p v-else>正在读取插件状态…</p>
+    <div v-else class="d-flex align-center justify-center ga-3 py-10">
+      <VProgressCircular
+        indeterminate
+        size="24"
+        width="2"
+        color="primary"
+      /><span class="text-body-2 text-medium-emphasis">正在读取插件状态…</span>
+    </div>
   </section>
 </template>
 <style scoped>
 .p115-page {
-  padding: 16px;
-  line-height: 1.6;
   max-width: 1100px;
   margin: auto;
-  color: inherit;
+  min-width: 0;
 }
-.p115-page h2 {
-  font-size: 1.35rem;
-  margin: 0;
-}
-.p115-page p {
-  margin: 6px 0;
-}
-.p115-page button,
-.p115-page input,
-.p115-page select {
-  font: inherit;
-  border: 1px solid #85919f70;
-  border-radius: 8px;
-  padding: 7px 12px;
-  color: inherit;
-  background: transparent;
-}
-.p115-page button {
-  cursor: pointer;
-}
-.p115-page button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.p115-page button.primary {
-  background: #245ec8;
-  color: #fff;
-  border-color: #245ec8;
-}
-.p115-page button.danger-button {
-  border-color: #ce5656;
-  color: #cf4545;
-}
-.p115-toolbar,
-.p115-actions,
-.p115-summary,
-.p115-pager,
-.p115-filters {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.p115-toolbar > div {
-  flex: 1;
-}
-.p115-steps {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin: 16px 0;
-}
-.p115-steps > div {
-  border: 1px solid #85919f55;
-  padding: 12px;
-  border-radius: 10px;
-}
-.p115-steps b,
-.p115-steps span,
-.p115-connection small,
-.p115-task small {
-  display: block;
-}
-.p115-steps .ready {
-  border-color: #38896f;
-}
-.p115-alert {
-  padding: 12px;
-  border-radius: 10px;
-  background: #8092ac15;
-  margin: 10px 0;
-  overflow-wrap: anywhere;
-}
-.p115-alert.danger {
-  background: #cc414115;
-  border: 1px solid #ce565650;
-}
-.p115-note,
-small {
-  opacity: 0.72;
-  font-size: 0.85rem;
-}
-.p115-task {
-  border: 1px solid #85919f55;
-  border-radius: 10px;
-  padding: 14px;
-  margin: 16px 0;
-}
-.p115-task progress {
-  display: block;
-  width: 100%;
-  margin: 10px 0;
-}
-.p115-filters {
-  margin-top: 20px;
-}
-.p115-filters label {
-  display: grid;
-  gap: 4px;
-}
-.p115-filters label:last-child {
-  flex: 1;
-  min-width: 160px;
-}
-.p115-records {
-  display: grid;
-  gap: 10px;
-  margin: 12px 0;
-}
-.p115-records article {
-  border: 1px solid #85919f55;
-  border-radius: 10px;
-  padding: 12px;
-  overflow-wrap: anywhere;
-}
-.p115-records header {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 0.85rem;
-}
-.p115-filename {
-  display: block;
-  margin-top: 6px;
+.min-width-0 {
+  min-width: 0;
 }
 .p115-path {
-  font-size: 0.9rem;
-}
-.p115-warning {
-  color: #ba731e;
-}
-.p115-empty {
-  text-align: center;
-  padding: 25px;
-}
-.p115-pager {
-  justify-content: center;
-}
-.p115-paths {
-  font-size: 0.9rem;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
-@media (max-width: 600px) {
-  .p115-steps {
-    grid-template-columns: 1fr;
-  }
-  .p115-page {
-    padding: 10px;
-  }
-  .p115-actions button {
-    flex: 1 1 130px;
-  }
-  .p115-records header {
-    flex-wrap: wrap;
-  }
+.p115-stat {
+  padding: 8px 12px;
+  border-inline-start: 2px solid rgba(var(--v-theme-primary), 0.25);
+}
+.p115-pagination {
+  min-width: 0;
 }
 </style>

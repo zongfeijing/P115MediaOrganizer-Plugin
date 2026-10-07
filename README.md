@@ -27,6 +27,10 @@ paginated previews/history on both desktop and mobile. V2 is unchanged.
 
 See the V3 plugin README for safety limits, upgrade notes and local UI testing.
 
+## MP-native interface (v1.3.1)
+
+Page, Config and Dashboard reuse MoviePilot's registered Vuetify controls and theme. Desktop records use a compact table; mobile uses cards with the same pagination. Settings are grouped into connection/directories, automation and advanced options. A small set of bundled SVG paths renders icons offline without global font CSS. Existing execution confirmation remains; enabling automatic execution and removing sources also require confirmation.
+
 ## Configuration
 
 ### 115 Connection

@@ -1,5 +1,10 @@
 // Local visual QA only. No live API, network requests or credentials are used.
 import { createApp, defineComponent, h, ref } from "vue";
+import { createVuetify } from "vuetify";
+import * as components from "vuetify/components";
+import * as directives from "vuetify/directives";
+// Preview entry only: production remote components never import global CSS.
+import "vuetify/styles";
 import Page from "./components/Page.vue";
 import Config from "./components/Config.vue";
 const rows = Array.from({ length: 65 }, (_, i) => ({
@@ -12,7 +17,12 @@ const rows = Array.from({ length: 65 }, (_, i) => ({
 }));
 const state: any = {
   busy: false,
-  configuration: { valid: true, errors: [], cookie_mode: "text" },
+  configuration: {
+    valid: true,
+    errors: [],
+    cookie_mode: "text",
+    preview_only: true,
+  },
   connection: { ok: true, kind: "healthy", message: "连接正常，Cookie 有效" },
   versions: { p115client: "0.0.9.7.2", "python-concurrenttools": "0.1.9" },
   plan: {
@@ -21,6 +31,7 @@ const state: any = {
     valid: true,
     created_at: "2026-10-06 21:30:00",
     expires_at: 1791351000,
+    counts: { planned: 57, skipped: 8, executed: 0, failed: 0 },
   },
   task: { status: "completed", message: "预览已生成：待执行 57，跳过 8" },
   scan_summary: {
@@ -111,6 +122,34 @@ createApp(
         ]);
     },
   }),
-).mount("#app");
+)
+  .use(
+    createVuetify({
+      components,
+      directives,
+      theme: {
+        defaultTheme: "light",
+        themes: {
+          light: {
+            colors: {
+              primary: "#8D51F9",
+              secondary: "#8A8D93",
+              success: "#56CA00",
+              warning: "#FFB400",
+              error: "#FF4C51",
+            },
+          },
+        },
+      },
+      defaults: {
+        VBtn: { elevation: 0 },
+        VCard: { elevation: 0, rounded: "lg" },
+        VTextField: { variant: "outlined", hideDetails: "auto" },
+        VSelect: { variant: "outlined", hideDetails: "auto" },
+        VTextarea: { variant: "outlined", hideDetails: "auto" },
+      },
+    }),
+  )
+  .mount("#app");
 document.body.style.cssText =
   "margin:0;font-family:system-ui,sans-serif;background:#f7f9fc;color:#243247";

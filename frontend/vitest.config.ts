@@ -2,5 +2,10 @@ import { defineConfig } from "vitest/config";
 import vue from "@vitejs/plugin-vue";
 export default defineConfig({
   plugins: [vue()],
-  test: { environment: "jsdom", include: ["src/**/*.spec.ts"] },
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test-setup.ts"],
+    server: { deps: { inline: ["vuetify"] } },
+    include: ["src/**/*.spec.ts"],
+  },
 });

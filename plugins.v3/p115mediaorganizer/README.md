@@ -76,3 +76,10 @@ npm run build
 ```
 
 本地无账号预览：`node node_modules/vite/bin/vite.js --config vite.preview.config.ts`，打开 localhost 的 `/preview.html`。该预览 API 是纯虚构数据，不连接 NAS 或 115。
+
+
+### MP 原生界面（v1.3.1）
+
+详情页采用当前阶段主操作、原生状态 Chip/Tabs/分页，桌面表格和手机卡片共享全部记录。配置页分为连接与目录、自动化、高级；正常执行使用主题主色，风险通过确认摘要表达。
+
+远程组件直接使用宿主已注册的 Vuetify，不导入全局样式或创建主题。`vuetify` 开发依赖仅供独立预览和组件测试。少量 MDI SVG 路径随插件打包，不需要在线加载图标。`npm run build` 会检查生产 CSS 作用域与 UI 运行时隔离。
