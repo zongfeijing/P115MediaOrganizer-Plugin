@@ -164,6 +164,7 @@ class Planner:
                 confidence=confidence,
                 target_root_path=target_root_path,
                 warnings=warnings,
+                image=self._message_image(mediainfo),
             ).to_dict())
         # 给每个 plan item 打上 batch_group_key + 同组内的 batch_index，
         # 执行阶段用同样的 key 分组、index 用于错误定位。
@@ -205,6 +206,15 @@ class Planner:
     @staticmethod
     def _history_keys(history: List[Dict[str, Any]]) -> set:
         return {str(item.get("item_id") or "") for item in history if item.get("status") == "executed"}
+
+    @staticmethod
+    def _message_image(mediainfo: Any) -> str:
+        """MoviePilot 识别结果的通知图片（背景图优先，其次海报）；取不到时为空。"""
+        getter = getattr(mediainfo, "get_message_image", None)
+        try:
+            return str(getter() or "") if callable(getter) else ""
+        except Exception:
+            return ""
 
     @staticmethod
     def _item_key(item: MediaItem) -> str:

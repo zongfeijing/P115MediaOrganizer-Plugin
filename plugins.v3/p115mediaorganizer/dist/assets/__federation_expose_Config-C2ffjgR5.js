@@ -1,5 +1,5 @@
 import { importShared } from './__federation_fn_import-JrT3xvdd.js';
-import { c as client, i as icons, _ as _export_sfc } from './_plugin-vue_export-helper-CZk8cyVf.js';
+import { c as client, i as icons, _ as _export_sfc } from './_plugin-vue_export-helper-CKv-jG-W.js';
 
 const {defineComponent:_defineComponent} = await importShared('vue');
 
@@ -39,6 +39,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
       refresh_plex_after_execute: true,
       plex_path_mappings: "",
       allow_external_execute: false,
+      auto_execute_policy: "confident",
       max_depth: 5,
       max_items_per_run: 200,
       min_file_size_mb: 100,
@@ -90,6 +91,13 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
     const conflictOptions = [
       { title: "跳过，不覆盖", value: "skip" },
       { title: "自动添加后缀", value: "rename_with_suffix" }
+    ];
+    const autoExecuteOptions = [
+      {
+        title: "只执行识别明确的文件（推荐）",
+        value: "confident"
+      },
+      { title: "执行全部可执行文件", value: "all" }
     ];
     const unrecognizedOptions = [
       { title: "跳过并显示原因", value: "skip" },
@@ -308,7 +316,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
       const _component_VForm = _resolveComponent("VForm");
       return _openBlock(), _createBlock(_component_VForm, {
         class: "p115-config",
-        onSubmit: _cache[34] || (_cache[34] = _withModifiers(($event) => validate(true), ["prevent"]))
+        onSubmit: _cache[35] || (_cache[35] = _withModifiers(($event) => validate(true), ["prevent"]))
       }, {
         default: _withCtx(() => [
           _createElementVNode("div", _hoisted_1, [
@@ -325,7 +333,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
               ]),
               _: 1
             }),
-            _cache[35] || (_cache[35] = _createElementVNode("div", { class: "flex-grow-1 min-width-0" }, [
+            _cache[36] || (_cache[36] = _createElementVNode("div", { class: "flex-grow-1 min-width-0" }, [
               _createElementVNode("h2", { class: "text-h6" }, "配置云端整理"),
               _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, " 先连接 115，再设置来源和运行方式 ")
             ], -1)),
@@ -349,7 +357,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 value: "connection",
                 "prepend-icon": _unref(icons).mdiFolderCogOutline
               }, {
-                default: _withCtx(() => [..._cache[36] || (_cache[36] = [
+                default: _withCtx(() => [..._cache[37] || (_cache[37] = [
                   _createTextVNode("连接与目录", -1)
                 ])]),
                 _: 1
@@ -358,7 +366,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 value: "automation",
                 "prepend-icon": _unref(icons).mdiCalendarClock
               }, {
-                default: _withCtx(() => [..._cache[37] || (_cache[37] = [
+                default: _withCtx(() => [..._cache[38] || (_cache[38] = [
                   _createTextVNode("自动化", -1)
                 ])]),
                 _: 1
@@ -367,7 +375,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 value: "advanced",
                 "prepend-icon": _unref(icons).mdiTune
               }, {
-                default: _withCtx(() => [..._cache[38] || (_cache[38] = [
+                default: _withCtx(() => [..._cache[39] || (_cache[39] = [
                   _createTextVNode("高级", -1)
                 ])]),
                 _: 1
@@ -401,19 +409,19 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
               density: "compact",
               class: "mb-4"
             }, {
-              default: _withCtx(() => [..._cache[39] || (_cache[39] = [
+              default: _withCtx(() => [..._cache[40] || (_cache[40] = [
                 _createTextVNode("配置格式检查通过。保存后可在详情页检查实际连接与目录。", -1)
               ])]),
               _: 1
             })) : _createCommentVNode("", true),
             _createVNode(_component_VWindow, {
               modelValue: tab.value,
-              "onUpdate:modelValue": _cache[31] || (_cache[31] = ($event) => tab.value = $event)
+              "onUpdate:modelValue": _cache[32] || (_cache[32] = ($event) => tab.value = $event)
             }, {
               default: _withCtx(() => [
                 _createVNode(_component_VWindowItem, { value: "connection" }, {
                   default: _withCtx(() => [
-                    _cache[51] || (_cache[51] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "115 连接", -1)),
+                    _cache[52] || (_cache[52] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "115 连接", -1)),
                     _createVNode(_component_VRow, null, {
                       default: _withCtx(() => [
                         _createVNode(_component_VCol, {
@@ -462,9 +470,9 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       ]),
                       _: 1
                     }),
-                    _cache[52] || (_cache[52] = _createElementVNode("p", { class: "text-caption text-medium-emphasis mt-3 mb-6" }, " 只使用当前选择的方式。Cookie 不会出现在进度或诊断记录中。 ", -1)),
+                    _cache[53] || (_cache[53] = _createElementVNode("p", { class: "text-caption text-medium-emphasis mt-3 mb-6" }, " 只使用当前选择的方式。Cookie 不会出现在进度或诊断记录中。 ", -1)),
                     _createElementVNode("div", _hoisted_4, [
-                      _cache[41] || (_cache[41] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium flex-grow-1" }, " 来源与目标 ", -1)),
+                      _cache[42] || (_cache[42] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium flex-grow-1" }, " 来源与目标 ", -1)),
                       _createVNode(_component_VBtn, {
                         variant: "text",
                         color: "secondary",
@@ -484,7 +492,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                         "prepend-icon": _unref(icons).mdiPlus,
                         onClick: add
                       }, {
-                        default: _withCtx(() => [..._cache[40] || (_cache[40] = [
+                        default: _withCtx(() => [..._cache[41] || (_cache[41] = [
                           _createTextVNode("添加来源", -1)
                         ])]),
                         _: 1
@@ -595,7 +603,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                   ]),
                                   _: 2
                                 }, 1024),
-                                _cache[42] || (_cache[42] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mt-3" }, " 目标不能位于任何来源目录内；分类目录需与 MP 分类匹配。 ", -1))
+                                _cache[43] || (_cache[43] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mt-3" }, " 目标不能位于任何来源目录内；分类目录需与 MP 分类匹配。 ", -1))
                               ]),
                               _: 2
                             }, 1024)
@@ -614,13 +622,13 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                             color: "secondary",
                             size: "28"
                           }, null, 8, ["icon"]),
-                          _cache[44] || (_cache[44] = _createElementVNode("p", { class: "text-body-2 mt-2 mb-3" }, "添加一个待整理来源开始配置", -1)),
+                          _cache[45] || (_cache[45] = _createElementVNode("p", { class: "text-body-2 mt-2 mb-3" }, "添加一个待整理来源开始配置", -1)),
                           _createVNode(_component_VBtn, {
                             variant: "tonal",
                             "prepend-icon": _unref(icons).mdiPlus,
                             onClick: add
                           }, {
-                            default: _withCtx(() => [..._cache[43] || (_cache[43] = [
+                            default: _withCtx(() => [..._cache[44] || (_cache[44] = [
                               _createTextVNode("添加来源", -1)
                             ])]),
                             _: 1
@@ -636,14 +644,14 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       class: "mb-4"
                     }, {
                       default: _withCtx(() => [
-                        _cache[47] || (_cache[47] = _createElementVNode("p", { class: "text-body-2" }, "移除此来源配置？不会删除网盘文件。", -1)),
+                        _cache[48] || (_cache[48] = _createElementVNode("p", { class: "text-body-2" }, "移除此来源配置？不会删除网盘文件。", -1)),
                         _createElementVNode("div", _hoisted_7, [
                           _createVNode(_component_VBtn, {
                             variant: "text",
                             color: "secondary",
                             onClick: _cache[7] || (_cache[7] = ($event) => deleteIndex.value = null)
                           }, {
-                            default: _withCtx(() => [..._cache[45] || (_cache[45] = [
+                            default: _withCtx(() => [..._cache[46] || (_cache[46] = [
                               _createTextVNode("取消", -1)
                             ])]),
                             _: 1
@@ -656,7 +664,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               deleteIndex.value = null;
                             })
                           }, {
-                            default: _withCtx(() => [..._cache[46] || (_cache[46] = [
+                            default: _withCtx(() => [..._cache[47] || (_cache[47] = [
                               _createTextVNode("确认移除", -1)
                             ])]),
                             _: 1
@@ -694,7 +702,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                         }),
                         _createVNode(_component_VCardText, null, {
                           default: _withCtx(() => [
-                            _cache[48] || (_cache[48] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mb-3" }, " 使用已经保存的连接。首次配置可先填写路径并保存，再浏览目录。 ", -1)),
+                            _cache[49] || (_cache[49] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mb-3" }, " 使用已经保存的连接。首次配置可先填写路径并保存，再浏览目录。 ", -1)),
                             browser.value.message ? (_openBlock(), _createBlock(_component_VAlert, {
                               key: 0,
                               type: "warning",
@@ -749,7 +757,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               disabled: browsersLoading.value || browser.value.path === "/",
                               onClick: _cache[10] || (_cache[10] = ($event) => browse(parent()))
                             }, {
-                              default: _withCtx(() => [..._cache[49] || (_cache[49] = [
+                              default: _withCtx(() => [..._cache[50] || (_cache[50] = [
                                 _createTextVNode("上一级", -1)
                               ])]),
                               _: 1
@@ -760,7 +768,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               disabled: browsersLoading.value || !!browser.value.message,
                               onClick: selectDirectory
                             }, {
-                              default: _withCtx(() => [..._cache[50] || (_cache[50] = [
+                              default: _withCtx(() => [..._cache[51] || (_cache[51] = [
                                 _createTextVNode("使用当前目录", -1)
                               ])]),
                               _: 1
@@ -776,7 +784,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 }),
                 _createVNode(_component_VWindowItem, { value: "automation" }, {
                   default: _withCtx(() => [
-                    _cache[57] || (_cache[57] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "运行方式", -1)),
+                    _cache[58] || (_cache[58] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "运行方式", -1)),
                     _createVNode(_component_VRow, { dense: "" }, {
                       default: _withCtx(() => [
                         _createVNode(_component_VCol, {
@@ -818,7 +826,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       "onUpdate:modelValue": setRunMode,
                       "hide-details": ""
                     }, null, 8, ["model-value"]),
-                    _cache[58] || (_cache[58] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mt-2 mb-4" }, " 手动执行始终需要确认摘要，无需关闭“仅生成预览”。 ", -1)),
+                    _cache[59] || (_cache[59] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mt-2 mb-4" }, " 手动执行始终需要确认摘要，无需关闭“仅生成预览”。 ", -1)),
                     config.value.dry_run === false ? (_openBlock(), _createBlock(_component_VAlert, {
                       key: 0,
                       type: "warning",
@@ -826,11 +834,20 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       density: "compact",
                       class: "mb-4"
                     }, {
-                      default: _withCtx(() => [..._cache[53] || (_cache[53] = [
+                      default: _withCtx(() => [..._cache[54] || (_cache[54] = [
                         _createTextVNode("自动运行会直接移动和重命名文件，不会逐次弹出确认。请先验证目录与规则。", -1)
                       ])]),
                       _: 1
                     })) : _createCommentVNode("", true),
+                    _createVNode(_component_VSelect, {
+                      modelValue: config.value.auto_execute_policy,
+                      "onUpdate:modelValue": _cache[13] || (_cache[13] = ($event) => config.value.auto_execute_policy = $event),
+                      items: autoExecuteOptions,
+                      label: "自动执行范围",
+                      hint: "适用于定时、立即运行和外部触发；手动确认执行不受影响",
+                      "persistent-hint": "",
+                      class: "mb-4"
+                    }, null, 8, ["modelValue"]),
                     autoExecutePending.value ? (_openBlock(), _createBlock(_component_VAlert, {
                       key: 1,
                       type: "warning",
@@ -838,14 +855,14 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       class: "mb-4"
                     }, {
                       default: _withCtx(() => [
-                        _cache[56] || (_cache[56] = _createElementVNode("p", { class: "text-body-2" }, " 开启自动执行后，定时或立即运行任务将直接移动和重命名文件。是否继续？ ", -1)),
+                        _cache[57] || (_cache[57] = _createElementVNode("p", { class: "text-body-2" }, " 开启自动执行后，定时或立即运行任务将直接移动和重命名文件。是否继续？ ", -1)),
                         _createElementVNode("div", _hoisted_9, [
                           _createVNode(_component_VBtn, {
                             variant: "text",
                             color: "secondary",
-                            onClick: _cache[13] || (_cache[13] = ($event) => autoExecutePending.value = false)
+                            onClick: _cache[14] || (_cache[14] = ($event) => autoExecutePending.value = false)
                           }, {
-                            default: _withCtx(() => [..._cache[54] || (_cache[54] = [
+                            default: _withCtx(() => [..._cache[55] || (_cache[55] = [
                               _createTextVNode("保持仅预览", -1)
                             ])]),
                             _: 1
@@ -853,12 +870,12 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           _createVNode(_component_VBtn, {
                             variant: "tonal",
                             color: "warning",
-                            onClick: _cache[14] || (_cache[14] = ($event) => {
+                            onClick: _cache[15] || (_cache[15] = ($event) => {
                               config.value.dry_run = false;
                               autoExecutePending.value = false;
                             })
                           }, {
-                            default: _withCtx(() => [..._cache[55] || (_cache[55] = [
+                            default: _withCtx(() => [..._cache[56] || (_cache[56] = [
                               _createTextVNode("开启自动执行", -1)
                             ])]),
                             _: 1
@@ -878,7 +895,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               items: scheduleOptions,
                               label: "常用运行时间",
                               placeholder: "选择后填入 CRON",
-                              "onUpdate:modelValue": _cache[15] || (_cache[15] = ($event) => config.value.cron = $event),
+                              "onUpdate:modelValue": _cache[16] || (_cache[16] = ($event) => config.value.cron = $event),
                               "hide-details": ""
                             })
                           ]),
@@ -891,7 +908,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           default: _withCtx(() => [
                             _createVNode(_component_VTextField, {
                               modelValue: config.value.cron,
-                              "onUpdate:modelValue": _cache[16] || (_cache[16] = ($event) => config.value.cron = $event),
+                              "onUpdate:modelValue": _cache[17] || (_cache[17] = ($event) => config.value.cron = $event),
                               label: "五段 CRON",
                               placeholder: "0 3 * * *",
                               hint: "留空不自动运行",
@@ -905,14 +922,14 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                     }),
                     _createVNode(_component_VSwitch, {
                       modelValue: config.value.onlyonce,
-                      "onUpdate:modelValue": _cache[17] || (_cache[17] = ($event) => config.value.onlyonce = $event),
+                      "onUpdate:modelValue": _cache[18] || (_cache[18] = ($event) => config.value.onlyonce = $event),
                       label: "保存后立即运行一次",
                       hint: "遵循上面的运行模式；仅预览模式不会自动执行",
                       "persistent-hint": "",
                       class: "mb-4"
                     }, null, 8, ["modelValue"]),
                     _createVNode(_component_VDivider, { class: "my-5" }),
-                    _cache[59] || (_cache[59] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "整理策略", -1)),
+                    _cache[60] || (_cache[60] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "整理策略", -1)),
                     _createVNode(_component_VRow, { dense: "" }, {
                       default: _withCtx(() => [
                         _createVNode(_component_VCol, {
@@ -922,7 +939,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           default: _withCtx(() => [
                             _createVNode(_component_VSwitch, {
                               modelValue: config.value.delete_empty_source_dirs,
-                              "onUpdate:modelValue": _cache[18] || (_cache[18] = ($event) => config.value.delete_empty_source_dirs = $event),
+                              "onUpdate:modelValue": _cache[19] || (_cache[19] = ($event) => config.value.delete_empty_source_dirs = $event),
                               label: "整理后清理空来源目录"
                             }, null, 8, ["modelValue"])
                           ]),
@@ -935,7 +952,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           default: _withCtx(() => [
                             _createVNode(_component_VSwitch, {
                               modelValue: config.value.refresh_plex_after_execute,
-                              "onUpdate:modelValue": _cache[19] || (_cache[19] = ($event) => config.value.refresh_plex_after_execute = $event),
+                              "onUpdate:modelValue": _cache[20] || (_cache[20] = ($event) => config.value.refresh_plex_after_execute = $event),
                               label: "整理后刷新 Plex"
                             }, null, 8, ["modelValue"])
                           ]),
@@ -948,7 +965,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           default: _withCtx(() => [
                             _createVNode(_component_VSelect, {
                               modelValue: config.value.conflict_strategy,
-                              "onUpdate:modelValue": _cache[20] || (_cache[20] = ($event) => config.value.conflict_strategy = $event),
+                              "onUpdate:modelValue": _cache[21] || (_cache[21] = ($event) => config.value.conflict_strategy = $event),
                               items: conflictOptions,
                               label: "重名策略",
                               "hide-details": ""
@@ -963,7 +980,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           default: _withCtx(() => [
                             _createVNode(_component_VSelect, {
                               modelValue: config.value.unrecognized_action,
-                              "onUpdate:modelValue": _cache[21] || (_cache[21] = ($event) => config.value.unrecognized_action = $event),
+                              "onUpdate:modelValue": _cache[22] || (_cache[22] = ($event) => config.value.unrecognized_action = $event),
                               items: unrecognizedOptions,
                               label: "无法识别的文件",
                               "hide-details": ""
@@ -978,7 +995,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           default: _withCtx(() => [
                             _createVNode(_component_VTextField, {
                               modelValue: config.value.max_items_per_run,
-                              "onUpdate:modelValue": _cache[22] || (_cache[22] = ($event) => config.value.max_items_per_run = $event),
+                              "onUpdate:modelValue": _cache[23] || (_cache[23] = ($event) => config.value.max_items_per_run = $event),
                               modelModifiers: { number: true },
                               type: "number",
                               label: "单次最多文件",
@@ -997,7 +1014,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           default: _withCtx(() => [
                             _createVNode(_component_VTextField, {
                               modelValue: config.value.min_file_size_mb,
-                              "onUpdate:modelValue": _cache[23] || (_cache[23] = ($event) => config.value.min_file_size_mb = $event),
+                              "onUpdate:modelValue": _cache[24] || (_cache[24] = ($event) => config.value.min_file_size_mb = $event),
                               modelModifiers: { number: true },
                               type: "number",
                               label: "最小文件体积（MB）",
@@ -1014,7 +1031,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           default: _withCtx(() => [
                             _createVNode(_component_VTextField, {
                               modelValue: config.value.max_depth,
-                              "onUpdate:modelValue": _cache[24] || (_cache[24] = ($event) => config.value.max_depth = $event),
+                              "onUpdate:modelValue": _cache[25] || (_cache[25] = ($event) => config.value.max_depth = $event),
                               modelModifiers: { number: true },
                               type: "number",
                               label: "扫描深度",
@@ -1039,7 +1056,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       density: "compact",
                       class: "mb-4"
                     }, {
-                      default: _withCtx(() => [..._cache[60] || (_cache[60] = [
+                      default: _withCtx(() => [..._cache[61] || (_cache[61] = [
                         _createTextVNode("通常无需修改。CID 覆盖和分类别名只在高级场景使用。", -1)
                       ])]),
                       _: 1
@@ -1055,21 +1072,21 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               default: _withCtx(() => [
                                 _createVNode(_component_VTextarea, {
                                   modelValue: config.value.target_cids,
-                                  "onUpdate:modelValue": _cache[25] || (_cache[25] = ($event) => config.value.target_cids = $event),
+                                  "onUpdate:modelValue": _cache[26] || (_cache[26] = ($event) => config.value.target_cids = $event),
                                   label: "目标 CID 覆盖 JSON",
                                   rows: "5",
                                   class: "p115-json mb-3"
                                 }, null, 8, ["modelValue"]),
                                 _createVNode(_component_VTextarea, {
                                   modelValue: config.value.category_mapping,
-                                  "onUpdate:modelValue": _cache[26] || (_cache[26] = ($event) => config.value.category_mapping = $event),
+                                  "onUpdate:modelValue": _cache[27] || (_cache[27] = ($event) => config.value.category_mapping = $event),
                                   label: "分类别名 JSON",
                                   rows: "4",
                                   class: "p115-json"
                                 }, null, 8, ["modelValue"]),
                                 _createVNode(_component_VTextField, {
                                   modelValue: config.value.exclude_keywords,
-                                  "onUpdate:modelValue": _cache[27] || (_cache[27] = ($event) => config.value.exclude_keywords = $event),
+                                  "onUpdate:modelValue": _cache[28] || (_cache[28] = ($event) => config.value.exclude_keywords = $event),
                                   label: "排除关键词",
                                   hint: "逗号分隔",
                                   "persistent-hint": "",
@@ -1161,14 +1178,14 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               default: _withCtx(() => [
                                 _createVNode(_component_VSwitch, {
                                   modelValue: config.value.allow_external_execute,
-                                  "onUpdate:modelValue": _cache[28] || (_cache[28] = ($event) => config.value.allow_external_execute = $event),
+                                  "onUpdate:modelValue": _cache[29] || (_cache[29] = ($event) => config.value.allow_external_execute = $event),
                                   label: "允许 API Key 外部自动执行",
                                   hint: "默认关闭；不会替代手动确认",
                                   "persistent-hint": ""
                                 }, null, 8, ["modelValue"]),
                                 _createVNode(_component_VCombobox, {
                                   modelValue: config.value.plex_mediaservers,
-                                  "onUpdate:modelValue": _cache[29] || (_cache[29] = ($event) => config.value.plex_mediaservers = $event),
+                                  "onUpdate:modelValue": _cache[30] || (_cache[30] = ($event) => config.value.plex_mediaservers = $event),
                                   label: "Plex 服务器名称",
                                   multiple: "",
                                   chips: "",
@@ -1179,7 +1196,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                 }, null, 8, ["modelValue"]),
                                 _createVNode(_component_VTextarea, {
                                   modelValue: config.value.plex_path_mappings,
-                                  "onUpdate:modelValue": _cache[30] || (_cache[30] = ($event) => config.value.plex_path_mappings = $event),
+                                  "onUpdate:modelValue": _cache[31] || (_cache[31] = ($event) => config.value.plex_path_mappings = $event),
                                   label: "Plex 路径映射（可选）",
                                   rows: "3",
                                   placeholder: "/媒体库 => /CloudNAS/115/媒体库",
@@ -1211,9 +1228,9 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                   variant: "text",
                   color: "secondary",
                   "prepend-icon": _unref(icons).mdiArrowLeft,
-                  onClick: _cache[32] || (_cache[32] = ($event) => emit("switch"))
+                  onClick: _cache[33] || (_cache[33] = ($event) => emit("switch"))
                 }, {
-                  default: _withCtx(() => [..._cache[61] || (_cache[61] = [
+                  default: _withCtx(() => [..._cache[62] || (_cache[62] = [
                     _createTextVNode("查看详情", -1)
                   ])]),
                   _: 1
@@ -1222,9 +1239,9 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 _createVNode(_component_VBtn, {
                   variant: "text",
                   color: "secondary",
-                  onClick: _cache[33] || (_cache[33] = ($event) => emit("close"))
+                  onClick: _cache[34] || (_cache[34] = ($event) => emit("close"))
                 }, {
-                  default: _withCtx(() => [..._cache[62] || (_cache[62] = [
+                  default: _withCtx(() => [..._cache[63] || (_cache[63] = [
                     _createTextVNode("取消", -1)
                   ])]),
                   _: 1
@@ -1237,7 +1254,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                   disabled: !canSave.value,
                   type: "submit"
                 }, {
-                  default: _withCtx(() => [..._cache[63] || (_cache[63] = [
+                  default: _withCtx(() => [..._cache[64] || (_cache[64] = [
                     _createTextVNode("检查并保存", -1)
                   ])]),
                   _: 1
@@ -1253,6 +1270,6 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
   }
 });
 
-const Config = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-8c8b50d7"]]);
+const Config = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-3937eb6a"]]);
 
 export { Config as default };

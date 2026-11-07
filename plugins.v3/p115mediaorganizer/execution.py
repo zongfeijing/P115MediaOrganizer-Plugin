@@ -7,12 +7,29 @@ from typing import Any
 
 
 TERMINAL_PLAN_STATUSES = {"executed", "skipped"}
+AUTO_EXECUTE_POLICIES = ("all", "confident")
+# 只影响文件名、不影响识别和分类的提示，不阻止保守自动执行
+NON_BLOCKING_WARNINGS = ("MoviePilot命名模板渲染失败",)
 
 
 @dataclass(frozen=True)
 class PlanValidation:
     valid: bool
     message: str = ""
+
+
+def auto_execute_hold_reason(item: dict[str, Any]) -> str:
+    """保守自动执行：返回应保留到人工确认的原因；识别明确且无警告时返回空字符串。"""
+    if item.get("confidence") == "unrecognized" and item.get("target_category") == "未识别":
+        return ""  # 用户明确配置了「移动到未识别目录」
+    if item.get("confidence") != "normal" or not (item.get("media_source") and item.get("media_id")):
+        return "未明确识别媒体"
+    warnings = [str(w) for w in item.get("warnings") or [] if w and not str(w).startswith(NON_BLOCKING_WARNINGS)]
+    if warnings:
+        return "；".join(warnings)
+    if item.get("media_type") == "tv" and not item.get("episode"):
+        return "未识别到明确集数"
+    return ""
 
 
 def executable_plan_items(plan: list[dict[str, Any]]) -> list[dict[str, Any]]:

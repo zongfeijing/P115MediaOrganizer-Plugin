@@ -17,6 +17,7 @@ const config = ref<Record<string, any>>({
   refresh_plex_after_execute: true,
   plex_path_mappings: "",
   allow_external_execute: false,
+  auto_execute_policy: "confident",
   max_depth: 5,
   max_items_per_run: 200,
   min_file_size_mb: 100,
@@ -77,6 +78,13 @@ const mediaOptions = [
 const conflictOptions = [
   { title: "跳过，不覆盖", value: "skip" },
   { title: "自动添加后缀", value: "rename_with_suffix" },
+];
+const autoExecuteOptions = [
+  {
+    title: "只执行识别明确的文件（推荐）",
+    value: "confident",
+  },
+  { title: "执行全部可执行文件", value: "all" },
 ];
 const unrecognizedOptions = [
   { title: "跳过并显示原因", value: "skip" },
@@ -589,6 +597,14 @@ onMounted(() => {
             class="mb-4"
             >自动运行会直接移动和重命名文件，不会逐次弹出确认。请先验证目录与规则。</VAlert
           >
+          <VSelect
+            v-model="config.auto_execute_policy"
+            :items="autoExecuteOptions"
+            label="自动执行范围"
+            hint="适用于定时、立即运行和外部触发；手动确认执行不受影响"
+            persistent-hint
+            class="mb-4"
+          />
           <VAlert
             v-if="autoExecutePending"
             type="warning"

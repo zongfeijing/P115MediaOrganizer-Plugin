@@ -1,5 +1,5 @@
 import { importShared } from './__federation_fn_import-JrT3xvdd.js';
-import { i as icons, s as stateLabels, _ as _export_sfc, c as client } from './_plugin-vue_export-helper-CZk8cyVf.js';
+import { i as icons, s as stateLabels, _ as _export_sfc, c as client } from './_plugin-vue_export-helper-CKv-jG-W.js';
 
 const {defineComponent:_defineComponent$1} = await importShared('vue');
 
@@ -64,6 +64,7 @@ const _sfc_main$1 = /* @__PURE__ */ _defineComponent$1({
         executed: "success",
         failed: "error",
         skipped: "warning",
+        held: "warning",
         planned: "primary",
         cancelled: "secondary"
       }[row.status] || "secondary";
@@ -110,7 +111,7 @@ const _sfc_main$1 = /* @__PURE__ */ _defineComponent$1({
                   _createElementVNode$1("td", _hoisted_2$1, [
                     _createElementVNode$1("div", _hoisted_3$1, _toDisplayString$1(name(row)), 1),
                     row.title && row.source_name ? (_openBlock$1(), _createElementBlock$1("div", _hoisted_4$1, _toDisplayString$1(identity(row)), 1)) : _createCommentVNode$1("", true),
-                    __props.kind === "scan" && row.path_hint ? (_openBlock$1(), _createElementBlock$1("div", _hoisted_5$1, _toDisplayString$1(row.path_hint), 1)) : _createCommentVNode$1("", true)
+                    ["scan", "attention"].includes(__props.kind) && row.path_hint ? (_openBlock$1(), _createElementBlock$1("div", _hoisted_5$1, _toDisplayString$1(row.path_hint), 1)) : _createCommentVNode$1("", true)
                   ]),
                   _createElementVNode$1("td", _hoisted_6$1, [
                     __props.kind === "runs" ? (_openBlock$1(), _createElementBlock$1("div", _hoisted_7$1, " 成功 " + _toDisplayString$1(row.success) + " · 失败 " + _toDisplayString$1(row.failed) + " · 跳过 " + _toDisplayString$1(row.skipped), 1)) : (_openBlock$1(), _createElementBlock$1(_Fragment$1, { key: 1 }, [
@@ -136,7 +137,7 @@ const _sfc_main$1 = /* @__PURE__ */ _defineComponent$1({
                       _: 2
                     }, 1032, ["color"])
                   ]),
-                  _createElementVNode$1("td", _hoisted_10$1, _toDisplayString$1(row.time || row.created_at || "—"), 1)
+                  _createElementVNode$1("td", _hoisted_10$1, _toDisplayString$1(row.time || row.first_seen || row.created_at || "—"), 1)
                 ]);
               }), 128))
             ])
@@ -164,7 +165,7 @@ const _sfc_main$1 = /* @__PURE__ */ _defineComponent$1({
                         ]),
                         _: 2
                       }, 1032, ["color"]),
-                      _createElementVNode$1("span", _hoisted_13$1, _toDisplayString$1(row.time || row.created_at || ""), 1)
+                      _createElementVNode$1("span", _hoisted_13$1, _toDisplayString$1(row.time || row.first_seen || row.created_at || ""), 1)
                     ]),
                     _createElementVNode$1("div", _hoisted_14$1, _toDisplayString$1(name(row)), 1),
                     row.title && row.source_name ? (_openBlock$1(), _createElementBlock$1("div", _hoisted_15$1, _toDisplayString$1(identity(row)), 1)) : _createCommentVNode$1("", true),
@@ -213,7 +214,7 @@ const _sfc_main$1 = /* @__PURE__ */ _defineComponent$1({
   }
 });
 
-const RecordList = /* @__PURE__ */ _export_sfc(_sfc_main$1, [["__scopeId", "data-v-d5aff0ce"]]);
+const RecordList = /* @__PURE__ */ _export_sfc(_sfc_main$1, [["__scopeId", "data-v-fe3da44e"]]);
 
 const {defineComponent:_defineComponent} = await importShared('vue');
 
@@ -262,13 +263,17 @@ const _hoisted_24 = {
   class: "text-caption text-medium-emphasis mb-4"
 };
 const _hoisted_25 = { class: "d-flex flex-wrap ga-2 mb-2" };
-const _hoisted_26 = { class: "p115-pagination d-flex flex-wrap align-center justify-center ga-2 mt-4" };
-const _hoisted_27 = { class: "text-caption text-medium-emphasis" };
-const _hoisted_28 = {
+const _hoisted_26 = {
   key: 11,
+  class: "text-caption text-medium-emphasis mb-3"
+};
+const _hoisted_27 = { class: "p115-pagination d-flex flex-wrap align-center justify-center ga-2 mt-4" };
+const _hoisted_28 = { class: "text-caption text-medium-emphasis" };
+const _hoisted_29 = {
+  key: 12,
   class: "text-caption text-medium-emphasis mt-4"
 };
-const _hoisted_29 = {
+const _hoisted_30 = {
   key: 2,
   class: "d-flex align-center justify-center ga-3 py-10"
 };
@@ -356,18 +361,23 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
       }
     }
     const connectionDetails = ref(false);
-    const tabs = [
+    const tabs = computed(() => [
+      {
+        value: "attention",
+        title: workflow.value?.attention?.count ? `需处理 ${workflow.value.attention.count}` : "需处理"
+      },
       { value: "plan", title: "本次预览" },
       { value: "history", title: "整理历史" },
       { value: "runs", title: "执行批次" },
       { value: "scan", title: "扫描诊断" }
-    ];
+    ]);
     const statusOptions = [
       { title: "全部状态", value: "" },
       { title: "待执行", value: "planned" },
       { title: "已执行", value: "executed" },
       { title: "失败", value: "failed" },
       { title: "跳过", value: "skipped" },
+      { title: "待确认", value: "held" },
       { title: "已停止", value: "cancelled" }
     ];
     const connectionColor = computed(
@@ -857,8 +867,8 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
             class: "mb-4"
           }, {
             default: _withCtx(() => [
-              (_openBlock(), _createElementBlock(_Fragment, null, _renderList(tabs, (tab) => {
-                return _createVNode(_component_VTab, {
+              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(tabs.value, (tab) => {
+                return _openBlock(), _createBlock(_component_VTab, {
                   key: tab.value,
                   value: tab.value
                 }, {
@@ -867,7 +877,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                   ]),
                   _: 2
                 }, 1032, ["value"]);
-              }), 64))
+              }), 128))
             ]),
             _: 1
           }, 8, ["modelValue"]),
@@ -948,12 +958,13 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
             ]),
             _: 1
           })) : _createCommentVNode("", true),
+          kind.value === "attention" ? (_openBlock(), _createElementBlock("p", _hoisted_26, " 跳过、失败或自动执行时因识别不明确而保留的文件。处理后（改名、删除或确认执行）重新生成预览，已解决的会自动移除。 ")) : _createCommentVNode("", true),
           _createVNode(RecordList, {
             records: records.value,
             kind: kind.value
           }, null, 8, ["records", "kind"]),
-          _createElementVNode("div", _hoisted_26, [
-            _createElementVNode("span", _hoisted_27, "共 " + _toDisplayString(pagination.value.total) + " 条 · 第 " + _toDisplayString(pagination.value.page) + " / " + _toDisplayString(pagination.value.total_pages || 1) + " 页", 1),
+          _createElementVNode("div", _hoisted_27, [
+            _createElementVNode("span", _hoisted_28, "共 " + _toDisplayString(pagination.value.total) + " 条 · 第 " + _toDisplayString(pagination.value.page) + " / " + _toDisplayString(pagination.value.total_pages || 1) + " 页", 1),
             _createVNode(_component_VPagination, {
               modelValue: page.value,
               "onUpdate:modelValue": _cache[13] || (_cache[13] = ($event) => page.value = $event),
@@ -964,13 +975,17 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
               "aria-label": "记录分页"
             }, null, 8, ["modelValue", "length", "disabled"])
           ]),
-          result.value?.run_id ? (_openBlock(), _createElementBlock("div", _hoisted_28, [
-            _createTextVNode(" 上次执行：成功 " + _toDisplayString(result.value.success) + " · 失败 " + _toDisplayString(result.value.failed) + " · 跳过 " + _toDisplayString(result.value.skipped) + " · 剩余 " + _toDisplayString(result.value.remaining || 0) + " ", 1),
-            plexSummary.value ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+          result.value?.run_id ? (_openBlock(), _createElementBlock("div", _hoisted_29, [
+            _createTextVNode(" 上次执行：成功 " + _toDisplayString(result.value.success) + " · 失败 " + _toDisplayString(result.value.failed) + " · 跳过 " + _toDisplayString(result.value.skipped), 1),
+            result.value.held ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+              _createTextVNode(" · 保留待确认 " + _toDisplayString(result.value.held), 1)
+            ], 64)) : _createCommentVNode("", true),
+            _createTextVNode(" · 剩余 " + _toDisplayString(result.value.remaining || 0) + " ", 1),
+            plexSummary.value ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
               _createTextVNode(" · " + _toDisplayString(plexSummary.value), 1)
             ], 64)) : _createCommentVNode("", true)
           ])) : _createCommentVNode("", true)
-        ], 64)) : (_openBlock(), _createElementBlock("div", _hoisted_29, [
+        ], 64)) : (_openBlock(), _createElementBlock("div", _hoisted_30, [
           _createVNode(_component_VProgressCircular, {
             indeterminate: "",
             size: "24",
@@ -984,6 +999,6 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
   }
 });
 
-const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-d6fa1c9a"]]);
+const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-3f67fbc6"]]);
 
 export { Page as default };

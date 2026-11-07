@@ -15,6 +15,8 @@ from .models import MediaItem
 
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".rmvb", ".flv", ".mov", ".wmv", ".webm"}
+# 字幕不随视频整理；视频移走后，清理来源目录时直接删除，避免残留文件让目录无法被清理。
+SUBTITLE_EXTENSIONS = {".srt", ".ass", ".ssa", ".sub", ".idx", ".sup", ".vtt", ".smi"}
 SKIP_DIR_NAMES = {"@Recycle", "#recycle", "@eaDir", "动画电影", "外语电影", "华语电影", "未分类", "综艺", "日韩剧", "欧美剧", "国产剧"}
 
 # 115 错误码分类（来源：p115client.check_response 的分支）
@@ -490,8 +492,28 @@ class P115Ops:
                 return entry
         return None
 
-    def list_empty_dirs_bottom_up(self, root_cid: str, max_depth: int) -> List[str]:
-        empty_dirs: List[str] = []
+    def plan_source_cleanup(
+        self,
+        root_cid: str,
+        max_depth: int,
+        removable_extensions: Iterable[str] = (),
+        sidecar_stems: Optional[Dict[str, Iterable[str]]] = None,
+    ) -> Dict[str, Any]:
+        """Plan source cleanup bottom-up without deleting anything.
+
+        dirs: folders to delete, children first. A folder holding nothing but files with
+        removable_extensions (subtitles) also counts as empty; deleting it removes those files,
+        whose names are listed per folder in dir_files.
+        files: subtitles to delete one by one inside folders that stay, limited to names that
+        start with the stem of a video organized in this run (sidecar_stems: parent cid -> stems).
+        The source root itself is never deleted, and other files are never touched.
+        """
+        removable = {ext.lower() for ext in removable_extensions}
+        stems = {
+            str(cid): tuple(f"{stem}.".casefold() for stem in values if stem)
+            for cid, values in (sidecar_stems or {}).items()
+        }
+        plan: Dict[str, Any] = {"dirs": [], "files": [], "dir_files": {}}
 
         def walk(cid: str, depth: int) -> bool:
             if depth > max_depth:
@@ -503,21 +525,37 @@ class P115Ops:
                     f"【115云端媒体整理】列出目录失败，无法判定是否为空：cid={cid}，原因：{err}"
                 )
                 return False
-            has_file = False
+            keeps_file = False
             all_child_dirs_empty = True
+            subtitles: List[Dict[str, str]] = []
+            remaining_stems: List[str] = []
             for entry in entries:
                 if self.is_folder(entry):
                     child_empty = walk(self.entry_cid(entry), depth + 1)
                     all_child_dirs_empty = all_child_dirs_empty and child_empty
+                    continue
+                name = self.entry_name(entry)
+                fid = self.entry_fid(entry)
+                if fid and PurePosixPath(name).suffix.lower() in removable:
+                    subtitles.append({"fid": fid, "name": name})
                 else:
-                    has_file = True
-            is_empty = not has_file and all_child_dirs_empty
-            if depth > 0 and is_empty:
-                empty_dirs.append(cid)
-            return is_empty
+                    keeps_file = True
+                    remaining_stems.append(f"{PurePosixPath(name).stem}.".casefold())
+            removable_dir = depth > 0 and not keeps_file and all_child_dirs_empty
+            if removable_dir:
+                plan["dirs"].append(cid)
+                plan["dir_files"][cid] = [item["name"] for item in subtitles]
+            elif stems.get(str(cid)):
+                for item in subtitles:
+                    name = item["name"].casefold()
+                    matched = max((len(stem) for stem in stems[str(cid)] if name.startswith(stem)), default=0)
+                    # 更长的文件名前缀属于目录里仍保留的另一个视频（如 X.REPACK.mkv），它的字幕不删
+                    if matched and not any(name.startswith(s) and len(s) > matched for s in remaining_stems):
+                        plan["files"].append(item)
+            return removable_dir
 
         walk(root_cid, 0)
-        return empty_dirs
+        return plan
 
     def delete(self, fid_or_cid: str):
         client = self.require_client()

@@ -255,8 +255,8 @@ class PluginRefreshTest(unittest.TestCase):
                 p._record_outcome(item, "executed", "", runid, history, run_history, result, success)
 
         p._execute_group = group
-        p._cleanup_empty_source_dirs = Mock(return_value=[])
-        response = p._execute_last_plan(allow_dry_run=True)
+        p._cleanup_sources = Mock(return_value={"dirs": [], "subtitles": []})
+        response = p._execute_last_plan(allow_dry_run=True, reviewed=True)
         self.assertEqual(response.data["plex_refresh_summary"], {"refreshed": 1, "unmatched": 1, "failed": 0})
         self.assertIn("Plex：已刷新 1 个目录，1 个未匹配到媒体库（未刷新）", response.message)
         self.assertEqual(p.get_data("runs")[-1]["plex_refresh_count"], 1)

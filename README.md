@@ -35,6 +35,14 @@ Page, Config and Dashboard reuse MoviePilot's registered Vuetify controls and th
 
 After an organize run, V3 refreshes only the movie/show folders the run touched instead of every Plex library. 115 paths are mapped to Plex paths automatically when a Plex library folder ends with the 115 path; otherwise add `plex_path_mappings` (see [Plex Refresh](#plex-refresh)). Folders that match no library are skipped and reported, never replaced by a full refresh.
 
+## Cleanup, follow-up list and notifications (v1.4.0)
+
+- Leftover subtitles are deleted after organizing. Source folders holding nothing but subtitles are removed with them; in folders that stay, only subtitles named after a video organized in this run (e.g. `video.chs.srt`) are deleted. Other files and the source roots are never touched.
+- A new **需处理** tab lists skipped, failed and held files until they are organized or a full scan no longer finds them.
+- `auto_execute_policy` (default `confident`): automatic runs (schedule, run-once, external trigger) execute only clearly recognized files and hold the rest for manual confirmation. `all` restores the previous behavior. Manual confirmed runs are not affected.
+- Run notifications use MoviePilot's `整理入库` message type with titles, episodes, categories and a poster; runs with no new files but items needing attention use `手动处理`.
+- The legacy JSON page (`get_page` tables and the `history_page` HTML endpoint) was removed; the Vue UI is unchanged.
+
 ## Configuration
 
 ### 115 Connection
@@ -127,17 +135,7 @@ Behavior:
 
 ## Details Page
 
-The plugin details page shows:
-
-- p115client connection status
-- source mappings
-- latest dry-run plan
-- execution result and errors
-- recent run summaries and history details
-- full paginated history page linked from the details page
-- cleaned empty source directory count
-
-The page is mobile-aware: on narrow screens the history / batch / config tables switch to a card list (so long filenames no longer overflow horizontally), the header actions become a 2×2 button grid, and the status line is a row of scannable chips. When the last run had failures, the 失败项 panel is pinned to the top and expanded automatically.
+The V3 details page (Vue) shows the connection status, the current preview with full target paths, the 需处理 follow-up list, organize history, run summaries and scan diagnostics. Every list is paginated, filterable and searchable on desktop and mobile.
 
 ## Anti-Throttling
 
@@ -163,10 +161,10 @@ Since v0.4.0 the plugin executes the organize plan in **batches** grouped by tar
 
 On any batch failure (`batch_rename`, `batch_move`, or `batch_delete`) the plugin transparently falls back to per-item calls so each item still gets its own success / failure entry in the history page. The default cookie-expired path remains: a `P115LoginError` aborts the run instead of looping per item.
 
-The empty-source-dir cleanup at the end of `execute_last_plan` also uses `batch_delete` with the same fallback behavior.
+The source cleanup at the end of `execute_last_plan` (empty folders and leftover subtitles) also uses `batch_delete` with the same fallback behavior.
 
 ## Safety Notes
 
 - Defaults to dry-run.
-- Empty source directory cleanup only runs under configured source roots.
+- Source cleanup only runs under source roots touched by the run, and only deletes empty folders and subtitles.
 - Keep real cookies, CIDs, and private 115 paths out of this public repository.

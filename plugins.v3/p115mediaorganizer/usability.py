@@ -103,7 +103,7 @@ class UsabilityMixin:
                             success=False, message="排队期间计划发生变化，请重新确认"
                         )
                     return self._execute_last_plan(
-                        trigger_source="manual_confirmed", allow_dry_run=True
+                        trigger_source="manual_confirmed", allow_dry_run=True, reviewed=True
                     )
 
                 response = self._run_exclusive("execute_confirmed", execute)
@@ -372,7 +372,13 @@ class UsabilityMixin:
                         "started_at",
                         "finished_at",
                         "plex_refresh_summary",
+                        "held",
+                        "attention_count",
                     )
+                },
+                "attention": {
+                    "count": len(self.get_data("attention") or []),
+                    "auto_execute_policy": self._auto_execute_policy,
                 },
             },
         )
@@ -386,16 +392,17 @@ class UsabilityMixin:
         query: str = "",
         run_id: str = "",
     ):
-        if kind not in ("plan", "history", "runs", "scan"):
+        if kind not in ("plan", "history", "runs", "scan", "attention"):
             return schemas.Response(success=False, message="未知记录类型")
         key = {
             "plan": "last_plan",
             "history": "history",
             "runs": "runs",
             "scan": "scan_records",
+            "attention": "attention",
         }[kind]
         rows = list(self.get_data(key) or [])
-        if kind in ("history", "runs"):
+        if kind in ("history", "runs", "attention"):
             rows.reverse()
         if kind == "runs":
             rows = [
@@ -447,6 +454,9 @@ class UsabilityMixin:
             "success",
             "failed",
             "skipped",
+            "held",
+            "held_reason",
+            "first_seen",
         }
         return schemas.Response(
             success=True,

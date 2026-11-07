@@ -89,18 +89,25 @@ async function run(action: string, body: any = {}) {
   }
 }
 const connectionDetails = ref(false);
-const tabs = [
+const tabs = computed(() => [
+  {
+    value: "attention",
+    title: workflow.value?.attention?.count
+      ? `需处理 ${workflow.value.attention.count}`
+      : "需处理",
+  },
   { value: "plan", title: "本次预览" },
   { value: "history", title: "整理历史" },
   { value: "runs", title: "执行批次" },
   { value: "scan", title: "扫描诊断" },
-];
+]);
 const statusOptions = [
   { title: "全部状态", value: "" },
   { title: "待执行", value: "planned" },
   { title: "已执行", value: "executed" },
   { title: "失败", value: "failed" },
   { title: "跳过", value: "skipped" },
+  { title: "待确认", value: "held" },
   { title: "已停止", value: "cancelled" },
 ];
 const connectionColor = computed(() =>
@@ -566,6 +573,12 @@ function timeLabel(epoch: number) {
           ></VExpansionPanel
         ></VExpansionPanels
       >
+      <p
+        v-if="kind === 'attention'"
+        class="text-caption text-medium-emphasis mb-3"
+      >
+        跳过、失败或自动执行时因识别不明确而保留的文件。处理后（改名、删除或确认执行）重新生成预览，已解决的会自动移除。
+      </p>
       <RecordList :records="records" :kind="kind" />
       <div
         class="p115-pagination d-flex flex-wrap align-center justify-center ga-2 mt-4"
@@ -584,7 +597,11 @@ function timeLabel(epoch: number) {
       </div>
       <div v-if="result?.run_id" class="text-caption text-medium-emphasis mt-4">
         上次执行：成功 {{ result.success }} · 失败 {{ result.failed }} · 跳过
-        {{ result.skipped }} · 剩余 {{ result.remaining || 0 }}
+        {{ result.skipped
+        }}<template v-if="result.held">
+          · 保留待确认 {{ result.held }}</template
+        >
+        · 剩余 {{ result.remaining || 0 }}
         <template v-if="plexSummary"> · {{ plexSummary }}</template>
       </div>
     </template>

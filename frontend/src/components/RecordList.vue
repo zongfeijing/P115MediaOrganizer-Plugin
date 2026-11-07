@@ -12,6 +12,7 @@ function color(row: any) {
         executed: "success",
         failed: "error",
         skipped: "warning",
+        held: "warning",
         planned: "primary",
         cancelled: "secondary",
       } as Record<string, string>
@@ -57,7 +58,7 @@ function identity(row: any) {
               {{ identity(row) }}
             </div>
             <div
-              v-if="kind === 'scan' && row.path_hint"
+              v-if="['scan', 'attention'].includes(kind) && row.path_hint"
               class="text-caption text-medium-emphasis mt-1"
             >
               {{ row.path_hint }}
@@ -95,7 +96,7 @@ function identity(row: any) {
             }}</VChip>
           </td>
           <td class="text-caption text-medium-emphasis p115-time">
-            {{ row.time || row.created_at || "—" }}
+            {{ row.time || row.first_seen || row.created_at || "—" }}
           </td>
         </tr>
       </tbody></VTable
@@ -112,7 +113,7 @@ function identity(row: any) {
               label(row)
             }}</VChip
             ><span class="text-caption text-medium-emphasis">{{
-              row.time || row.created_at || ""
+              row.time || row.first_seen || row.created_at || ""
             }}</span>
           </div>
           <div class="text-body-2 font-weight-medium p115-wrap">

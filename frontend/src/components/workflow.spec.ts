@@ -420,3 +420,81 @@ describe("offline native icon rendering", () => {
     config.unmount();
   });
 });
+
+describe("follow-up list and conservative auto-execution", () => {
+  it("shows the follow-up count and loads attention records", async () => {
+    const api = hostApi();
+    api.get = vi.fn(
+      async (path: string): Promise<any> => ({
+        success: true,
+        data: path.endsWith("workflow")
+          ? {
+              ...state,
+              attention: { count: 2, auto_execute_policy: "confident" },
+            }
+          : {
+              items: [
+                {
+                  source_name: "Unknown.2026.mkv",
+                  status: "held",
+                  reason: "已保留待确认：未明确识别媒体",
+                  path_hint: "/最近接收/Movie/Unknown.2026.mkv",
+                  first_seen: "2026-11-07 20:00:00",
+                },
+              ],
+              pagination: { page: 1, total_pages: 1, total: 1 },
+            },
+      }),
+    );
+    const w = render(Page, { api, pluginId: "P115MediaOrganizer" });
+    await flushPromises();
+    const tab = w
+      .findAll(".v-tab")
+      .find((t: any) => t.text().includes("需处理"))!;
+    expect(tab.text()).toContain("需处理 2");
+    await tab.trigger("click");
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith(
+      "plugin/P115MediaOrganizer/records",
+      expect.objectContaining({
+        params: expect.objectContaining({ kind: "attention" }),
+      }),
+    );
+    expect(w.text()).toContain("已保留待确认：未明确识别媒体");
+    expect(w.text()).toContain("待确认");
+    w.unmount();
+  });
+  it("defaults auto-execution to confident files and saves the choice", async () => {
+    const api = hostApi();
+    const w = render(Config, {
+      api,
+      pluginId: "P115MediaOrganizer",
+      initialConfig: {
+        cookie_text: "fake",
+        dry_run: false,
+        source_mappings: JSON.stringify([
+          {
+            name: "Movie",
+            media_type: "movie",
+            source_path: "/in",
+            target_root_path: "/library",
+          },
+        ]),
+      },
+    });
+    w.findComponent(components.VTabs).vm.$emit(
+      "update:modelValue",
+      "automation",
+    );
+    await flushPromises();
+    const policy = w
+      .findAllComponents(components.VSelect)
+      .find((c) => c.props("label") === "自动执行范围")!;
+    expect(policy.props("modelValue")).toBe("confident");
+    policy.vm.$emit("update:modelValue", "all");
+    await w.find("form").trigger("submit");
+    await flushPromises();
+    expect((w.emitted("save")![0][0] as any).auto_execute_policy).toBe("all");
+    w.unmount();
+  });
+});

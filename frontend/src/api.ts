@@ -40,6 +40,7 @@ export const stateLabels: Record<string, string> = {
   executed: "已执行",
   skipped: "跳过",
   failed: "失败",
+  held: "待确认",
   queued: "排队中",
   running: "运行中",
   stopping: "正在停止",

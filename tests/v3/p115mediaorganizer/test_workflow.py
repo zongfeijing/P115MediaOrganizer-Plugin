@@ -24,6 +24,7 @@ from .test_plugin import (
 configuration = load_module("configuration")
 task_state = load_module("task_state")
 plex_refresh = load_module("plex_refresh")
+reporting = load_module("reporting")
 
 
 class Response:
@@ -93,12 +94,19 @@ ns.update(
     ExecuteResult=models.ExecuteResult,
     ANTI_BLOCK_DEFAULTS=p115_ops_module.ANTI_BLOCK_DEFAULTS,
     BATCH_RENAME_MAX=p115_ops_module.BATCH_RENAME_MAX,
+    SUBTITLE_EXTENSIONS=p115_ops_module.SUBTITLE_EXTENSIONS,
     CronTrigger=Cron,
     source_contains_target=execution_module.source_contains_target,
     source_entry_matches_plan=execution_module.source_entry_matches_plan,
     resolve_target_cids_for_source=execution_module.resolve_target_cids_for_source,
     compute_batch_group_key=planner_module.compute_batch_group_key,
     parse_json=configuration.parse_json,
+    AUTO_EXECUTE_POLICIES=execution_module.AUTO_EXECUTE_POLICIES,
+    auto_execute_hold_reason=execution_module.auto_execute_hold_reason,
+    attention_items=reporting.attention_items,
+    organize_message=reporting.organize_message,
+    attention_message=reporting.attention_message,
+    stamp_first_seen=reporting.stamp_first_seen,
     describe_refresh_summary=plex_refresh.describe_refresh_summary,
     load_plex_libraries=plex_refresh.load_plex_libraries,
     parse_path_mappings=plex_refresh.parse_path_mappings,
@@ -107,6 +115,8 @@ ns.update(
     resolve_refresh_targets=plex_refresh.resolve_refresh_targets,
     summarize_refresh=plex_refresh.summarize_refresh,
     logger=SimpleNamespace(info=Mock(), warning=Mock(), error=Mock()),
+    MessageType=SimpleNamespace(Organize="整理入库", Manual="手动处理", Plugin="插件"),
+    TriggerRequest=type("TriggerRequest", (), {}),
 )
 main_tree = ast.parse((PLUGIN_DIR / "__init__.py").read_text())
 main_tree.body = [
@@ -145,7 +155,7 @@ def plugin():
     p._source_mappings = p.config["source_mappings"]
     p._cookie_mode = "text"
     p._cookie_text = "fake"
-    p._notify_summary = Mock()
+    p.post_message = Mock()
     return p
 
 
@@ -355,15 +365,15 @@ class PlanWorkflowTest(unittest.TestCase):
             p._task.request_stop()
 
         p._execute_group = group
-        p._cleanup_empty_source_dirs = Mock()
+        p._cleanup_sources = Mock()
         p._refresh_plex_after_success = Mock()
-        response = p._execute_last_plan(allow_dry_run=True)
+        response = p._execute_last_plan(allow_dry_run=True, reviewed=True)
         self.assertTrue(response.data["cancelled"])
         self.assertEqual(response.data["success"], 1)
         self.assertEqual(response.data["remaining"], 2)
         self.assertEqual(p.get_data("last_plan")[0]["status"], "executed")
         self.assertEqual(len(p.get_data("history")), 1)
-        p._cleanup_empty_source_dirs.assert_not_called()
+        p._cleanup_sources.assert_not_called()
         p._refresh_plex_after_success.assert_not_called()
 
 
@@ -520,8 +530,10 @@ class HealthAndSchedulingTest(unittest.TestCase):
         p._ops_instance = SimpleNamespace(
             available=True, import_error="", health_check=health
         )
-        page = p.get_page()
-        self.assertTrue(page)
+        self.assertEqual(p.get_page(), [])
+        form, model = p.get_form()
+        self.assertEqual(form, [])
+        self.assertIn("auto_execute_policy", model)
         health.assert_not_called()
         self.assertEqual(p.get_render_mode(), ("vue", "dist/assets"))
 

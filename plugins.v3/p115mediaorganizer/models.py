@@ -62,6 +62,8 @@ class OrganizePlan:
     target_root_path: str = ""
     batch_group_key: str = ""
     batch_index: int = 0
+    # 通知用图片（MoviePilot 识别结果的背景图或海报 URL）
+    image: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -74,6 +76,8 @@ class ExecuteResult:
     success: int = 0
     failed: int = 0
     skipped: int = 0
+    # 保守自动执行时保留、等待人工确认的文件数
+    held: int = 0
     errors: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:

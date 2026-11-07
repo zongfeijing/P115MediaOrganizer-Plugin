@@ -1,5 +1,5 @@
 import { importShared } from './__federation_fn_import-JrT3xvdd.js';
-import { c as client, i as icons, _ as _export_sfc } from './_plugin-vue_export-helper-CZk8cyVf.js';
+import { c as client, i as icons, _ as _export_sfc } from './_plugin-vue_export-helper-CKv-jG-W.js';
 
 const {defineComponent:_defineComponent} = await importShared('vue');
 
