@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from .execution import source_contains_target
+from .plex_refresh import parse_path_mappings
 
 
 @dataclass
@@ -136,6 +137,7 @@ def check_configuration(config: dict[str, Any]) -> ConfigurationCheck:
                 result.errors.append("选择移动未识别文件时，请先配置未识别目录 CID")
         except ValueError:
             pass
+    result.errors.extend(parse_path_mappings(config.get("plex_path_mappings"))[1])
     ranges = {
         "max_depth": (0, 30),
         "max_items_per_run": (0, 10000),

@@ -31,6 +31,10 @@ See the V3 plugin README for safety limits, upgrade notes and local UI testing.
 
 Page, Config and Dashboard reuse MoviePilot's registered Vuetify controls and theme. Desktop records use a compact table; mobile uses cards with the same pagination. Settings are grouped into connection/directories, automation and advanced options. A small set of bundled SVG paths renders icons offline without global font CSS. Existing execution confirmation remains; enabling automatic execution and removing sources also require confirmation.
 
+## Targeted Plex refresh (v1.3.2)
+
+After an organize run, V3 refreshes only the movie/show folders the run touched instead of every Plex library. 115 paths are mapped to Plex paths automatically when a Plex library folder ends with the 115 path; otherwise add `plex_path_mappings` (see [Plex Refresh](#plex-refresh)). Folders that match no library are skipped and reported, never replaced by a full refresh.
+
 ## Configuration
 
 ### 115 Connection
@@ -94,8 +98,9 @@ After a successful organize run, the plugin can refresh Plex through MoviePilot'
 
 - `refresh_plex_after_execute`: enabled by default.
 - `plex_mediaservers`: optional Plex server name list. Leave empty to refresh every configured and connected Plex server.
+- `plex_path_mappings` (V3): optional, one `115 path => Plex path` rule per line, for example `/媒体库 => /CloudNAS/115/媒体库`.
 
-Refreshes are deduplicated by `media_type + target_category`, so one run refreshes each touched category directory once.
+V3 (v1.3.2+) refreshes only the movie/show folders touched by the run, inside the Plex library that contains them. 115 paths usually differ from the paths Plex sees through its mount; MoviePilot's built-in item refresh treats such a mismatch as "refresh every library", so V3 no longer uses it. Instead the plugin reads the Plex library folders and maps each touched folder itself: an explicit mapping wins; otherwise a Plex folder whose trailing segments equal the start of the 115 path (for example `/CloudNAS/115/媒体库/Movie` for `/媒体库/Movie`) is detected automatically. Folders that match no library are skipped and reported in the run result — the plugin never falls back to a full refresh. V2 keeps its existing behavior (refresh deduplicated by `media_type + target_category`).
 
 ### Advanced Overrides
 

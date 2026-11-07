@@ -371,6 +371,7 @@ class UsabilityMixin:
                         "cancelled",
                         "started_at",
                         "finished_at",
+                        "plex_refresh_summary",
                     )
                 },
             },

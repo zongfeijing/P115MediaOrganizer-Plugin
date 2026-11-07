@@ -298,6 +298,14 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
     const busy = computed(() => workflow.value?.busy);
     const currentPlan = computed(() => workflow.value?.plan);
     const result = computed(() => workflow.value?.last_result);
+    const plexSummary = computed(() => {
+      const s = result.value?.plex_refresh_summary;
+      if (!s || !(s.refreshed || s.unmatched || s.failed)) return "";
+      let text = `Plex 已刷新 ${s.refreshed || 0} 个目录`;
+      if (s.unmatched) text += ` · ${s.unmatched} 个未匹配媒体库（未刷新）`;
+      if (s.failed) text += ` · ${s.failed} 个失败`;
+      return text;
+    });
     const progress = computed(() => {
       const t = workflow.value?.task;
       return t?.total ? Math.min(100, Math.round(100 * t.completed / t.total)) : null;
@@ -956,7 +964,12 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
               "aria-label": "记录分页"
             }, null, 8, ["modelValue", "length", "disabled"])
           ]),
-          result.value?.run_id ? (_openBlock(), _createElementBlock("div", _hoisted_28, " 上次执行：成功 " + _toDisplayString(result.value.success) + " · 失败 " + _toDisplayString(result.value.failed) + " · 跳过 " + _toDisplayString(result.value.skipped) + " · 剩余 " + _toDisplayString(result.value.remaining || 0), 1)) : _createCommentVNode("", true)
+          result.value?.run_id ? (_openBlock(), _createElementBlock("div", _hoisted_28, [
+            _createTextVNode(" 上次执行：成功 " + _toDisplayString(result.value.success) + " · 失败 " + _toDisplayString(result.value.failed) + " · 跳过 " + _toDisplayString(result.value.skipped) + " · 剩余 " + _toDisplayString(result.value.remaining || 0) + " ", 1),
+            plexSummary.value ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+              _createTextVNode(" · " + _toDisplayString(plexSummary.value), 1)
+            ], 64)) : _createCommentVNode("", true)
+          ])) : _createCommentVNode("", true)
         ], 64)) : (_openBlock(), _createElementBlock("div", _hoisted_29, [
           _createVNode(_component_VProgressCircular, {
             indeterminate: "",
@@ -971,6 +984,6 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
   }
 });
 
-const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-6bc1f89e"]]);
+const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-d6fa1c9a"]]);
 
 export { Page as default };

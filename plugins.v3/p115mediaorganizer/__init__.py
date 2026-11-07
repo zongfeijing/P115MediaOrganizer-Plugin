@@ -16,8 +16,7 @@ from app.sdk.config import settings
 from app.sdk.services import MediaServerHelper
 from app.sdk.logging import logger
 from app.sdk.plugin import _PluginBase
-from app.schemas import RefreshMediaItem
-from app.schemas.types import MediaType, MessageType
+from app.schemas.types import MessageType
 
 from .api_models import ListDirectoryRequest, ResolvePathRequest, TriggerRequest
 from .category_mapper import DEFAULT_CATEGORY_MAPPING, CategoryMapper
@@ -34,6 +33,15 @@ from .usability import UsabilityMixin
 from .models import ExecuteResult
 from .p115_ops import ANTI_BLOCK_DEFAULTS, BATCH_RENAME_MAX, P115Ops, P115UnavailableError
 from .planner import Planner, compute_batch_group_key
+from .plex_refresh import (
+    describe_refresh_summary,
+    load_plex_libraries,
+    parse_path_mappings,
+    refresh_endpoint,
+    refresh_folders,
+    resolve_refresh_targets,
+    summarize_refresh,
+)
 
 
 DEFAULT_SOURCE_MAPPINGS = [
@@ -72,7 +80,7 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
     plugin_name = "115云端媒体整理"
     plugin_desc = "将115最近接收中的媒体云端整理到媒体库。"
     plugin_icon = "clouddisk.png"
-    plugin_version = "1.3.1"
+    plugin_version = "1.3.2"
     plugin_author = "Zongfei"
     author_url = "https://github.com/Zongfei"
     plugin_config_prefix = "p115mediaorganizer_"
@@ -88,6 +96,7 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
     _refresh_plex_after_execute = True
     _allow_external_execute = False
     _plex_mediaservers = []
+    _plex_path_mappings = ""
     _max_depth = 5
     _max_items_per_run = 200
     _min_file_size_mb = 100
@@ -156,6 +165,7 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
         self._refresh_plex_after_execute = self._safe_bool(config.get("refresh_plex_after_execute"), True)
         self._allow_external_execute = self._safe_bool(config.get("allow_external_execute"), False)
         self._plex_mediaservers = config.get("plex_mediaservers") or []
+        self._plex_path_mappings = str(config.get("plex_path_mappings") or "")
         self._max_depth = self._safe_int(config.get("max_depth"), 5)
         self._max_items_per_run = self._safe_int(config.get("max_items_per_run"), 200)
         self._min_file_size_mb = self._safe_int(config.get("min_file_size_mb"), 100)
@@ -282,6 +292,17 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
                 self._col(self._mediaserver_select("plex_mediaservers", "Plex媒体服务器"), 12),
             ]),
             self._row([
+                self._col(self._textarea(
+                    "plex_path_mappings",
+                    "Plex路径映射（可选，每行：115路径 => Plex路径）",
+                    rows=3,
+                ), 12),
+            ]),
+            self._form_hint(
+                "整理后只刷新本次涉及的影片/剧集目录；Plex 路径与 115 路径末段相同（如 /CloudNAS/115/媒体库/Movie）时可自动匹配，"
+                "否则请填写映射，例如 /媒体库 => /CloudNAS/115/媒体库。匹配不到的目录会跳过，不会刷新全部媒体库"
+            ),
+            self._row([
                 self._col(self._select("conflict_strategy", "重名策略", [{"title": "跳过", "value": "skip"}, {"title": "自动后缀", "value": "rename_with_suffix"}]), 4),
                 self._col(self._select("unrecognized_action", "未识别处理", [{"title": "跳过", "value": "skip"}, {"title": "移动到未识别", "value": "move_to_unrecognized"}]), 4),
             ]),
@@ -367,7 +388,7 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
         success = last_result.get("success", 0)
         failed = last_result.get("failed", 0)
         skipped = last_result.get("skipped", 0)
-        plex_count = len(last_result.get("plex_refresh") or [])
+        plex_count = summarize_refresh(last_result.get("plex_refresh"))["refreshed"]
         cleaned_count = len(last_result.get("cleaned_empty_dirs") or [])
 
         # 计划 Tab
@@ -449,15 +470,16 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
         history_mobile_items = history_items_view[:20]
 
         # Plex Tab
+        plex_status_labels = {"refreshed": "已刷新", "unmatched": "未匹配", "failed": "失败", "unavailable": "未连接"}
         plex_rows = [[
             item.get("server"),
-            item.get("media_type"),
+            item.get("library") or "—",
             item.get("category"),
-            item.get("target_path"),
-            "成功" if item.get("success") else "失败",
+            item.get("target_path") or item.get("source_path"),
+            plex_status_labels.get(item.get("status"), "成功" if item.get("success") else "失败"),
             item.get("message"),
         ] for item in (last_result.get("plex_refresh") or [])]
-        plex_table = self._table(["服务器", "类型", "分类", "目标路径", "状态", "消息"], plex_rows)
+        plex_table = self._table(["服务器", "媒体库", "分类", "刷新路径", "状态", "消息"], plex_rows)
 
         # 失败项数据（表格 + 卡片在 panel 组装处生成）
         error_rows = [[item.get("source"), item.get("error")]
@@ -848,6 +870,7 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
         result_dict["cancelled"] = self._task.cancel.is_set()
         result_dict["remaining"] = len(executable_plan_items(plan))
         result_dict["plex_refresh"] = [] if result_dict["cancelled"] else self._refresh_plex_after_success(success_items)
+        result_dict["plex_refresh_summary"] = summarize_refresh(result_dict["plex_refresh"])
         result_dict["run_id"] = run_id
         result_dict["trigger_source"] = trigger_source or "manual"
         result_dict["started_at"] = started_at.strftime("%Y-%m-%d %H:%M:%S")
@@ -867,7 +890,11 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
         self._notify_summary("已安全停止" if result_dict["cancelled"] else "执行完成", result_dict)
         self._execution_plan = None
         prefix = "已安全停止" if result_dict["cancelled"] else "执行完成"
-        return schemas.Response(success=result.failed == 0, message=f"{prefix}：成功 {result.success}，失败 {result.failed}，跳过 {result.skipped}，清理空目录 {len(cleaned_dirs)}", data=result_dict)
+        plex_text = describe_refresh_summary(result_dict["plex_refresh_summary"])
+        message = f"{prefix}：成功 {result.success}，失败 {result.failed}，跳过 {result.skipped}，清理空目录 {len(cleaned_dirs)}"
+        if plex_text:
+            message += f"；{plex_text}"
+        return schemas.Response(success=result.failed == 0, message=message, data=result_dict)
 
     def history(self, page: int = None, page_size: int = None, run_page: int = None, run_page_size: int = None):
         history = list(reversed(self.get_data("history") or []))
@@ -1489,52 +1516,88 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
             logger.info("【115云端媒体整理】整理后刷新Plex未启用，跳过刷新")
             return []
 
-        services = self._plex_service_infos()
-        if not services:
-            return [{"success": False, "message": "未找到可用的Plex媒体服务器"}]
-
-        refresh_items = self._plex_refresh_items(success_items)
-        if not refresh_items:
-            logger.info("【115云端媒体整理】未生成Plex刷新项目，跳过刷新")
+        roots_by_type: Dict[str, str] = {}
+        for source in self._source_mapping_list():
+            roots_by_type.setdefault(source["media_type"], source["target_root_path"])
+        folders = refresh_folders(success_items, roots_by_type)
+        if not folders:
+            logger.info("【115云端媒体整理】未生成Plex刷新目录，跳过刷新")
             return []
 
+        services = self._plex_service_infos()
+        if not services:
+            # 未配置或未连接 Plex 不计入目录失败数，避免未使用 Plex 的用户每次通知都出现失败提示。
+            return [{"success": False, "status": "unavailable", "message": "未找到可用的Plex媒体服务器，未刷新"}]
+
+        mappings, errors = parse_path_mappings(self._plex_path_mappings)
+        for error in errors:
+            logger.warning(f"【115云端媒体整理】{error}，该行已忽略")
+        logger.info(f"【115云端媒体整理】开始刷新Plex：服务器 {len(services)} 个，目录 {len(folders)} 个")
         results = []
-        logger.info(
-            f"【115云端媒体整理】开始刷新Plex：服务器 {len(services)} 个，"
-            f"分类 {len(refresh_items)} 个"
-        )
         for service_name, service_info in services.items():
-            try:
-                instance = service_info.instance
-                if hasattr(instance, "refresh_library_by_items"):
-                    instance.refresh_library_by_items([item["refresh_item"] for item in refresh_items])
-                    for item in refresh_items:
-                        results.append({
-                            "success": True,
-                            "server": service_name,
-                            "media_type": item["media_type"],
-                            "category": item["category"],
-                            "target_path": str(item["refresh_item"].target_path),
-                            "message": "已提交刷新",
-                        })
-                    logger.info(f"【115云端媒体整理】Plex刷新已提交：{service_name}，分类 {len(refresh_items)} 个")
-                elif hasattr(instance, "refresh_root_library"):
-                    instance.refresh_root_library()
+            results.extend(self._refresh_plex_server(service_name, service_info.instance, folders, mappings))
+        return results
+
+    def _refresh_plex_server(self, service_name: str, instance: Any,
+                             folders: List[Dict[str, str]], mappings: List[Any]) -> List[Dict[str, Any]]:
+        """只对匹配到的 Plex 媒体库提交局部扫描。
+
+        不调用宿主 refresh_library_by_items：它在任一路径匹配失败时会刷新全部媒体库。
+        """
+        get_plex = getattr(instance, "get_plex", None)
+        plex = get_plex() if callable(get_plex) else None
+        if plex is None:
+            logger.warning(f"【115云端媒体整理】Plex刷新失败：{service_name} 无法获取Plex连接")
+            return [{"success": False, "status": "failed", "server": service_name, "message": "无法获取Plex连接，未刷新"}]
+        try:
+            libraries = load_plex_libraries(plex)
+        except Exception as err:
+            logger.warning(f"【115云端媒体整理】读取Plex媒体库失败：{service_name}，原因：{err}")
+            return [{"success": False, "status": "failed", "server": service_name, "message": f"读取Plex媒体库失败：{err}"}]
+
+        results = []
+        for folder in folders:
+            row = {
+                "server": service_name,
+                "media_type": folder["media_type"],
+                "category": folder["category"],
+                "source_path": folder["path"],
+            }
+            targets, method = resolve_refresh_targets(folder["path"], mappings, libraries)
+            if not targets:
+                results.append({
+                    **row,
+                    "success": False,
+                    "status": "unmatched",
+                    "library": "",
+                    "target_path": "",
+                    "message": "未匹配到Plex媒体库，已跳过（不会刷新全部媒体库）；可在高级设置填写Plex路径映射",
+                })
+                logger.warning(f"【115云端媒体整理】Plex未匹配到媒体库，跳过刷新：{service_name}，{folder['path']}")
+                continue
+            for library, plex_path in targets:
+                try:
+                    plex.query(refresh_endpoint(library.key, plex_path))
+                except Exception as err:
                     results.append({
-                        "success": True,
-                        "server": service_name,
-                        "media_type": "all",
-                        "category": "全部",
-                        "target_path": "",
-                        "message": "已提交全库刷新",
+                        **row,
+                        "success": False,
+                        "status": "failed",
+                        "library": library.title,
+                        "target_path": plex_path,
+                        "message": f"刷新失败：{err}",
                     })
-                    logger.info(f"【115云端媒体整理】Plex不支持按项目刷新，已提交全库刷新：{service_name}")
-                else:
-                    results.append({"success": False, "server": service_name, "message": "不支持刷新"})
-                    logger.warning(f"【115云端媒体整理】Plex刷新失败：{service_name} 不支持刷新")
-            except Exception as err:
-                results.append({"success": False, "server": service_name, "message": str(err)})
-                logger.warning(f"【115云端媒体整理】Plex刷新异常：{service_name}，原因：{err}")
+                    logger.warning(f"【115云端媒体整理】Plex刷新异常：{service_name} / {library.title} - {plex_path}，原因：{err}")
+                    continue
+                results.append({
+                    **row,
+                    "success": True,
+                    "status": "refreshed",
+                    "library": library.title,
+                    "target_path": plex_path,
+                    "message": f"已提交刷新（{method}）",
+                })
+                logger.info(f"【115云端媒体整理】Plex刷新已提交：{service_name} / {library.title} - {plex_path}")
         return results
 
     def _plex_service_infos(self) -> Dict[str, Any]:
@@ -1556,41 +1619,11 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
             logger.warning(f"【115云端媒体整理】获取Plex媒体服务器失败：{err}")
             return {}
 
-    def _plex_refresh_items(self, success_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        mappings = self._source_mapping_list()
-        roots_by_type = {}
-        for source in mappings:
-            media_type = source.get("media_type")
-            if media_type and media_type not in roots_by_type:
-                roots_by_type[media_type] = source.get("target_root_path")
-
-        deduped = {}
-        for item in success_items:
-            media_type = str(item.get("media_type") or "").lower()
-            category = str(item.get("target_category") or "").strip()
-            if media_type not in ("movie", "tv") or not category:
-                continue
-            target_root_path = item.get("target_root_path") or roots_by_type.get(media_type) or ""
-            key = (media_type, category, target_root_path)
-            if key in deduped:
-                continue
-            target_dir_path = f"{target_root_path.rstrip('/')}/{category}" if target_root_path else category
-            target_path = f"{target_dir_path.rstrip('/')}/.p115_media_organizer_refresh"
-            deduped[key] = {
-                "media_type": media_type,
-                "category": category,
-                "refresh_item": RefreshMediaItem(
-                    title=category,
-                    year=None,
-                    type=MediaType.MOVIE if media_type == "movie" else MediaType.TV,
-                    category=category,
-                    target_path=Path(target_path),
-                ),
-            }
-        return list(deduped.values())
-
     def _notify_summary(self, title: str, result: Dict[str, Any]):
         text = f"计划 {result.get('total', 0)} 条，成功 {result.get('success', 0)}，失败 {result.get('failed', 0)}，跳过 {result.get('skipped', 0)}"
+        plex_text = describe_refresh_summary(result.get("plex_refresh_summary"))
+        if plex_text:
+            text += f"\n{plex_text}"
         errors = result.get("errors") or []
         if errors:
             text += "\n" + "\n".join([f"{item.get('source')}: {item.get('error')}" for item in errors[:5]])
@@ -1629,7 +1662,7 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
             "success": result.get("success", 0),
             "failed": result.get("failed", 0),
             "skipped": result.get("skipped", 0),
-            "plex_refresh_count": len(result.get("plex_refresh") or []),
+            "plex_refresh_count": summarize_refresh(result.get("plex_refresh"))["refreshed"],
             "cleaned_empty_dirs": len(result.get("cleaned_empty_dirs") or []),
             "media_counts": media_counts,
             "category_counts": category_counts,
@@ -1761,6 +1794,7 @@ class P115MediaOrganizer(UsabilityMixin, _PluginBase):
             "refresh_plex_after_execute": True,
             "allow_external_execute": False,
             "plex_mediaservers": [],
+            "plex_path_mappings": "",
             "max_depth": 5,
             "max_items_per_run": 200,
             "min_file_size_mb": 100,

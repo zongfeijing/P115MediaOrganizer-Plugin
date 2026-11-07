@@ -37,6 +37,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
       dry_run: true,
       delete_empty_source_dirs: true,
       refresh_plex_after_execute: true,
+      plex_path_mappings: "",
       allow_external_execute: false,
       max_depth: 5,
       max_items_per_run: 200,
@@ -307,7 +308,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
       const _component_VForm = _resolveComponent("VForm");
       return _openBlock(), _createBlock(_component_VForm, {
         class: "p115-config",
-        onSubmit: _cache[33] || (_cache[33] = _withModifiers(($event) => validate(true), ["prevent"]))
+        onSubmit: _cache[34] || (_cache[34] = _withModifiers(($event) => validate(true), ["prevent"]))
       }, {
         default: _withCtx(() => [
           _createElementVNode("div", _hoisted_1, [
@@ -324,7 +325,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
               ]),
               _: 1
             }),
-            _cache[34] || (_cache[34] = _createElementVNode("div", { class: "flex-grow-1 min-width-0" }, [
+            _cache[35] || (_cache[35] = _createElementVNode("div", { class: "flex-grow-1 min-width-0" }, [
               _createElementVNode("h2", { class: "text-h6" }, "配置云端整理"),
               _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, " 先连接 115，再设置来源和运行方式 ")
             ], -1)),
@@ -348,7 +349,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 value: "connection",
                 "prepend-icon": _unref(icons).mdiFolderCogOutline
               }, {
-                default: _withCtx(() => [..._cache[35] || (_cache[35] = [
+                default: _withCtx(() => [..._cache[36] || (_cache[36] = [
                   _createTextVNode("连接与目录", -1)
                 ])]),
                 _: 1
@@ -357,7 +358,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 value: "automation",
                 "prepend-icon": _unref(icons).mdiCalendarClock
               }, {
-                default: _withCtx(() => [..._cache[36] || (_cache[36] = [
+                default: _withCtx(() => [..._cache[37] || (_cache[37] = [
                   _createTextVNode("自动化", -1)
                 ])]),
                 _: 1
@@ -366,7 +367,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 value: "advanced",
                 "prepend-icon": _unref(icons).mdiTune
               }, {
-                default: _withCtx(() => [..._cache[37] || (_cache[37] = [
+                default: _withCtx(() => [..._cache[38] || (_cache[38] = [
                   _createTextVNode("高级", -1)
                 ])]),
                 _: 1
@@ -400,19 +401,19 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
               density: "compact",
               class: "mb-4"
             }, {
-              default: _withCtx(() => [..._cache[38] || (_cache[38] = [
+              default: _withCtx(() => [..._cache[39] || (_cache[39] = [
                 _createTextVNode("配置格式检查通过。保存后可在详情页检查实际连接与目录。", -1)
               ])]),
               _: 1
             })) : _createCommentVNode("", true),
             _createVNode(_component_VWindow, {
               modelValue: tab.value,
-              "onUpdate:modelValue": _cache[30] || (_cache[30] = ($event) => tab.value = $event)
+              "onUpdate:modelValue": _cache[31] || (_cache[31] = ($event) => tab.value = $event)
             }, {
               default: _withCtx(() => [
                 _createVNode(_component_VWindowItem, { value: "connection" }, {
                   default: _withCtx(() => [
-                    _cache[50] || (_cache[50] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "115 连接", -1)),
+                    _cache[51] || (_cache[51] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "115 连接", -1)),
                     _createVNode(_component_VRow, null, {
                       default: _withCtx(() => [
                         _createVNode(_component_VCol, {
@@ -461,9 +462,9 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       ]),
                       _: 1
                     }),
-                    _cache[51] || (_cache[51] = _createElementVNode("p", { class: "text-caption text-medium-emphasis mt-3 mb-6" }, " 只使用当前选择的方式。Cookie 不会出现在进度或诊断记录中。 ", -1)),
+                    _cache[52] || (_cache[52] = _createElementVNode("p", { class: "text-caption text-medium-emphasis mt-3 mb-6" }, " 只使用当前选择的方式。Cookie 不会出现在进度或诊断记录中。 ", -1)),
                     _createElementVNode("div", _hoisted_4, [
-                      _cache[40] || (_cache[40] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium flex-grow-1" }, " 来源与目标 ", -1)),
+                      _cache[41] || (_cache[41] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium flex-grow-1" }, " 来源与目标 ", -1)),
                       _createVNode(_component_VBtn, {
                         variant: "text",
                         color: "secondary",
@@ -483,7 +484,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                         "prepend-icon": _unref(icons).mdiPlus,
                         onClick: add
                       }, {
-                        default: _withCtx(() => [..._cache[39] || (_cache[39] = [
+                        default: _withCtx(() => [..._cache[40] || (_cache[40] = [
                           _createTextVNode("添加来源", -1)
                         ])]),
                         _: 1
@@ -594,7 +595,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                   ]),
                                   _: 2
                                 }, 1024),
-                                _cache[41] || (_cache[41] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mt-3" }, " 目标不能位于任何来源目录内；分类目录需与 MP 分类匹配。 ", -1))
+                                _cache[42] || (_cache[42] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mt-3" }, " 目标不能位于任何来源目录内；分类目录需与 MP 分类匹配。 ", -1))
                               ]),
                               _: 2
                             }, 1024)
@@ -613,13 +614,13 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                             color: "secondary",
                             size: "28"
                           }, null, 8, ["icon"]),
-                          _cache[43] || (_cache[43] = _createElementVNode("p", { class: "text-body-2 mt-2 mb-3" }, "添加一个待整理来源开始配置", -1)),
+                          _cache[44] || (_cache[44] = _createElementVNode("p", { class: "text-body-2 mt-2 mb-3" }, "添加一个待整理来源开始配置", -1)),
                           _createVNode(_component_VBtn, {
                             variant: "tonal",
                             "prepend-icon": _unref(icons).mdiPlus,
                             onClick: add
                           }, {
-                            default: _withCtx(() => [..._cache[42] || (_cache[42] = [
+                            default: _withCtx(() => [..._cache[43] || (_cache[43] = [
                               _createTextVNode("添加来源", -1)
                             ])]),
                             _: 1
@@ -635,14 +636,14 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       class: "mb-4"
                     }, {
                       default: _withCtx(() => [
-                        _cache[46] || (_cache[46] = _createElementVNode("p", { class: "text-body-2" }, "移除此来源配置？不会删除网盘文件。", -1)),
+                        _cache[47] || (_cache[47] = _createElementVNode("p", { class: "text-body-2" }, "移除此来源配置？不会删除网盘文件。", -1)),
                         _createElementVNode("div", _hoisted_7, [
                           _createVNode(_component_VBtn, {
                             variant: "text",
                             color: "secondary",
                             onClick: _cache[7] || (_cache[7] = ($event) => deleteIndex.value = null)
                           }, {
-                            default: _withCtx(() => [..._cache[44] || (_cache[44] = [
+                            default: _withCtx(() => [..._cache[45] || (_cache[45] = [
                               _createTextVNode("取消", -1)
                             ])]),
                             _: 1
@@ -655,7 +656,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               deleteIndex.value = null;
                             })
                           }, {
-                            default: _withCtx(() => [..._cache[45] || (_cache[45] = [
+                            default: _withCtx(() => [..._cache[46] || (_cache[46] = [
                               _createTextVNode("确认移除", -1)
                             ])]),
                             _: 1
@@ -693,7 +694,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                         }),
                         _createVNode(_component_VCardText, null, {
                           default: _withCtx(() => [
-                            _cache[47] || (_cache[47] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mb-3" }, " 使用已经保存的连接。首次配置可先填写路径并保存，再浏览目录。 ", -1)),
+                            _cache[48] || (_cache[48] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mb-3" }, " 使用已经保存的连接。首次配置可先填写路径并保存，再浏览目录。 ", -1)),
                             browser.value.message ? (_openBlock(), _createBlock(_component_VAlert, {
                               key: 0,
                               type: "warning",
@@ -748,7 +749,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               disabled: browsersLoading.value || browser.value.path === "/",
                               onClick: _cache[10] || (_cache[10] = ($event) => browse(parent()))
                             }, {
-                              default: _withCtx(() => [..._cache[48] || (_cache[48] = [
+                              default: _withCtx(() => [..._cache[49] || (_cache[49] = [
                                 _createTextVNode("上一级", -1)
                               ])]),
                               _: 1
@@ -759,7 +760,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               disabled: browsersLoading.value || !!browser.value.message,
                               onClick: selectDirectory
                             }, {
-                              default: _withCtx(() => [..._cache[49] || (_cache[49] = [
+                              default: _withCtx(() => [..._cache[50] || (_cache[50] = [
                                 _createTextVNode("使用当前目录", -1)
                               ])]),
                               _: 1
@@ -775,7 +776,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 }),
                 _createVNode(_component_VWindowItem, { value: "automation" }, {
                   default: _withCtx(() => [
-                    _cache[56] || (_cache[56] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "运行方式", -1)),
+                    _cache[57] || (_cache[57] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "运行方式", -1)),
                     _createVNode(_component_VRow, { dense: "" }, {
                       default: _withCtx(() => [
                         _createVNode(_component_VCol, {
@@ -817,7 +818,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       "onUpdate:modelValue": setRunMode,
                       "hide-details": ""
                     }, null, 8, ["model-value"]),
-                    _cache[57] || (_cache[57] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mt-2 mb-4" }, " 手动执行始终需要确认摘要，无需关闭“仅生成预览”。 ", -1)),
+                    _cache[58] || (_cache[58] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mt-2 mb-4" }, " 手动执行始终需要确认摘要，无需关闭“仅生成预览”。 ", -1)),
                     config.value.dry_run === false ? (_openBlock(), _createBlock(_component_VAlert, {
                       key: 0,
                       type: "warning",
@@ -825,7 +826,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       density: "compact",
                       class: "mb-4"
                     }, {
-                      default: _withCtx(() => [..._cache[52] || (_cache[52] = [
+                      default: _withCtx(() => [..._cache[53] || (_cache[53] = [
                         _createTextVNode("自动运行会直接移动和重命名文件，不会逐次弹出确认。请先验证目录与规则。", -1)
                       ])]),
                       _: 1
@@ -837,14 +838,14 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       class: "mb-4"
                     }, {
                       default: _withCtx(() => [
-                        _cache[55] || (_cache[55] = _createElementVNode("p", { class: "text-body-2" }, " 开启自动执行后，定时或立即运行任务将直接移动和重命名文件。是否继续？ ", -1)),
+                        _cache[56] || (_cache[56] = _createElementVNode("p", { class: "text-body-2" }, " 开启自动执行后，定时或立即运行任务将直接移动和重命名文件。是否继续？ ", -1)),
                         _createElementVNode("div", _hoisted_9, [
                           _createVNode(_component_VBtn, {
                             variant: "text",
                             color: "secondary",
                             onClick: _cache[13] || (_cache[13] = ($event) => autoExecutePending.value = false)
                           }, {
-                            default: _withCtx(() => [..._cache[53] || (_cache[53] = [
+                            default: _withCtx(() => [..._cache[54] || (_cache[54] = [
                               _createTextVNode("保持仅预览", -1)
                             ])]),
                             _: 1
@@ -857,7 +858,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               autoExecutePending.value = false;
                             })
                           }, {
-                            default: _withCtx(() => [..._cache[54] || (_cache[54] = [
+                            default: _withCtx(() => [..._cache[55] || (_cache[55] = [
                               _createTextVNode("开启自动执行", -1)
                             ])]),
                             _: 1
@@ -911,7 +912,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       class: "mb-4"
                     }, null, 8, ["modelValue"]),
                     _createVNode(_component_VDivider, { class: "my-5" }),
-                    _cache[58] || (_cache[58] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "整理策略", -1)),
+                    _cache[59] || (_cache[59] = _createElementVNode("div", { class: "text-subtitle-1 font-weight-medium mb-3" }, "整理策略", -1)),
                     _createVNode(_component_VRow, { dense: "" }, {
                       default: _withCtx(() => [
                         _createVNode(_component_VCol, {
@@ -1038,7 +1039,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       density: "compact",
                       class: "mb-4"
                     }, {
-                      default: _withCtx(() => [..._cache[59] || (_cache[59] = [
+                      default: _withCtx(() => [..._cache[60] || (_cache[60] = [
                         _createTextVNode("通常无需修改。CID 覆盖和分类别名只在高级场景使用。", -1)
                       ])]),
                       _: 1
@@ -1175,6 +1176,16 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                   hint: "留空刷新全部已配置 Plex 服务器",
                                   "persistent-hint": "",
                                   class: "mt-4"
+                                }, null, 8, ["modelValue"]),
+                                _createVNode(_component_VTextarea, {
+                                  modelValue: config.value.plex_path_mappings,
+                                  "onUpdate:modelValue": _cache[30] || (_cache[30] = ($event) => config.value.plex_path_mappings = $event),
+                                  label: "Plex 路径映射（可选）",
+                                  rows: "3",
+                                  placeholder: "/媒体库 => /CloudNAS/115/媒体库",
+                                  hint: "每行一条「115 路径 => Plex 路径」。整理后只刷新本次涉及的影片/剧集目录；Plex 路径末段与 115 路径相同时会自动匹配，匹配不到的目录会跳过，不会刷新全部媒体库。",
+                                  "persistent-hint": "",
+                                  class: "p115-json mt-4"
                                 }, null, 8, ["modelValue"])
                               ]),
                               _: 1
@@ -1200,9 +1211,9 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                   variant: "text",
                   color: "secondary",
                   "prepend-icon": _unref(icons).mdiArrowLeft,
-                  onClick: _cache[31] || (_cache[31] = ($event) => emit("switch"))
+                  onClick: _cache[32] || (_cache[32] = ($event) => emit("switch"))
                 }, {
-                  default: _withCtx(() => [..._cache[60] || (_cache[60] = [
+                  default: _withCtx(() => [..._cache[61] || (_cache[61] = [
                     _createTextVNode("查看详情", -1)
                   ])]),
                   _: 1
@@ -1211,9 +1222,9 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 _createVNode(_component_VBtn, {
                   variant: "text",
                   color: "secondary",
-                  onClick: _cache[32] || (_cache[32] = ($event) => emit("close"))
+                  onClick: _cache[33] || (_cache[33] = ($event) => emit("close"))
                 }, {
-                  default: _withCtx(() => [..._cache[61] || (_cache[61] = [
+                  default: _withCtx(() => [..._cache[62] || (_cache[62] = [
                     _createTextVNode("取消", -1)
                   ])]),
                   _: 1
@@ -1226,7 +1237,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                   disabled: !canSave.value,
                   type: "submit"
                 }, {
-                  default: _withCtx(() => [..._cache[62] || (_cache[62] = [
+                  default: _withCtx(() => [..._cache[63] || (_cache[63] = [
                     _createTextVNode("检查并保存", -1)
                   ])]),
                   _: 1
@@ -1242,6 +1253,6 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
   }
 });
 
-const Config = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-4eed2c1a"]]);
+const Config = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-8c8b50d7"]]);
 
 export { Config as default };

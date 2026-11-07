@@ -29,6 +29,14 @@ const valid = computed(() => workflow.value?.configuration?.valid);
 const busy = computed(() => workflow.value?.busy);
 const currentPlan = computed(() => workflow.value?.plan);
 const result = computed(() => workflow.value?.last_result);
+const plexSummary = computed(() => {
+  const s = result.value?.plex_refresh_summary;
+  if (!s || !(s.refreshed || s.unmatched || s.failed)) return "";
+  let text = `Plex 已刷新 ${s.refreshed || 0} 个目录`;
+  if (s.unmatched) text += ` · ${s.unmatched} 个未匹配媒体库（未刷新）`;
+  if (s.failed) text += ` · ${s.failed} 个失败`;
+  return text;
+});
 const progress = computed(() => {
   const t = workflow.value?.task;
   return t?.total
@@ -577,6 +585,7 @@ function timeLabel(epoch: number) {
       <div v-if="result?.run_id" class="text-caption text-medium-emphasis mt-4">
         上次执行：成功 {{ result.success }} · 失败 {{ result.failed }} · 跳过
         {{ result.skipped }} · 剩余 {{ result.remaining || 0 }}
+        <template v-if="plexSummary"> · {{ plexSummary }}</template>
       </div>
     </template>
     <div v-else class="d-flex align-center justify-center ga-3 py-10">

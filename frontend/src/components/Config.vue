@@ -15,6 +15,7 @@ const config = ref<Record<string, any>>({
   dry_run: true,
   delete_empty_source_dirs: true,
   refresh_plex_after_execute: true,
+  plex_path_mappings: "",
   allow_external_execute: false,
   max_depth: 5,
   max_items_per_run: 200,
@@ -755,7 +756,14 @@ onMounted(() => {
                   closable-chips
                   hint="留空刷新全部已配置 Plex 服务器"
                   persistent-hint
-                  class="mt-4" /></VExpansionPanelText
+                  class="mt-4" /><VTextarea
+                  v-model="config.plex_path_mappings"
+                  label="Plex 路径映射（可选）"
+                  rows="3"
+                  placeholder="/媒体库 => /CloudNAS/115/媒体库"
+                  hint="每行一条「115 路径 => Plex 路径」。整理后只刷新本次涉及的影片/剧集目录；Plex 路径末段与 115 路径相同时会自动匹配，匹配不到的目录会跳过，不会刷新全部媒体库。"
+                  persistent-hint
+                  class="p115-json mt-4" /></VExpansionPanelText
             ></VExpansionPanel>
           </VExpansionPanels>
         </VWindowItem>

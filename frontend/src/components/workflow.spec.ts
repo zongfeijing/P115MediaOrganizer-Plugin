@@ -325,6 +325,71 @@ describe("native UI safeguards", () => {
   });
 });
 
+describe("targeted Plex refresh", () => {
+  it("saves Plex path mappings with the rest of the configuration", async () => {
+    const api = hostApi();
+    const w = render(Config, {
+      api,
+      pluginId: "P115MediaOrganizer",
+      initialConfig: {
+        cookie_text: "fake",
+        source_mappings: JSON.stringify([
+          {
+            name: "Movie",
+            media_type: "movie",
+            source_path: "/in",
+            target_root_path: "/媒体库/Movie",
+          },
+        ]),
+      },
+    });
+    w.findComponent(components.VTabs).vm.$emit("update:modelValue", "advanced");
+    await flushPromises();
+    await w
+      .findAll(".v-expansion-panel-title")
+      .find((t: any) => t.text().includes("外部执行与 Plex"))!
+      .trigger("click");
+    await flushPromises();
+    const mapping = w
+      .findAllComponents(components.VTextarea)
+      .find((c) => c.props("label") === "Plex 路径映射（可选）")!;
+    expect(mapping.exists()).toBe(true);
+    mapping.vm.$emit("update:modelValue", "/媒体库 => /CloudNAS/115/媒体库");
+    await w.find("form").trigger("submit");
+    await flushPromises();
+    expect((w.emitted("save")![0][0] as any).plex_path_mappings).toBe(
+      "/媒体库 => /CloudNAS/115/媒体库",
+    );
+    w.unmount();
+  });
+  it("shows how many folders were refreshed or skipped in the last run", async () => {
+    const api = hostApi();
+    api.get = vi.fn(
+      async (path: string): Promise<any> => ({
+        success: true,
+        data: path.endsWith("workflow")
+          ? {
+              ...state,
+              last_result: {
+                run_id: "r1",
+                success: 3,
+                failed: 0,
+                skipped: 0,
+                remaining: 0,
+                plex_refresh_summary: { refreshed: 2, unmatched: 1, failed: 0 },
+              },
+            }
+          : { items: [], pagination: { page: 1, total_pages: 1, total: 0 } },
+      }),
+    );
+    const w = render(Page, { api, pluginId: "P115MediaOrganizer" });
+    await flushPromises();
+    expect(w.text()).toContain("Plex 已刷新 2 个目录");
+    expect(w.text()).toContain("1 个未匹配媒体库（未刷新）");
+    w.unmount();
+  });
+});
+
 describe("offline native icon rendering", () => {
   it("renders SVG paths for toolbar and directory actions without icon-font CSS", async () => {
     const api = hostApi();

@@ -23,6 +23,7 @@ from .test_plugin import (
 
 configuration = load_module("configuration")
 task_state = load_module("task_state")
+plex_refresh = load_module("plex_refresh")
 
 
 class Response:
@@ -98,6 +99,13 @@ ns.update(
     resolve_target_cids_for_source=execution_module.resolve_target_cids_for_source,
     compute_batch_group_key=planner_module.compute_batch_group_key,
     parse_json=configuration.parse_json,
+    describe_refresh_summary=plex_refresh.describe_refresh_summary,
+    load_plex_libraries=plex_refresh.load_plex_libraries,
+    parse_path_mappings=plex_refresh.parse_path_mappings,
+    refresh_endpoint=plex_refresh.refresh_endpoint,
+    refresh_folders=plex_refresh.refresh_folders,
+    resolve_refresh_targets=plex_refresh.resolve_refresh_targets,
+    summarize_refresh=plex_refresh.summarize_refresh,
     logger=SimpleNamespace(info=Mock(), warning=Mock(), error=Mock()),
 )
 main_tree = ast.parse((PLUGIN_DIR / "__init__.py").read_text())
